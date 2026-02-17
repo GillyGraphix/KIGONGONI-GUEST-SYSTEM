@@ -109,7 +109,7 @@ if ($users_query) {
     }
 }
 
-// --- STATISTICS (ALL 7 CARDS) ---
+// --- STATISTICS ---
 $stats_sql = "SELECT 
                 COUNT(*) as total_activities,
                 COUNT(DISTINCT username) as unique_users,
@@ -120,8 +120,24 @@ $stats_sql = "SELECT
                 COUNT(CASE WHEN action LIKE '%payment%' THEN 1 END) as payment_count
               FROM activity_logs $where_sql";
 
-$stats_result = $conn->query($stats_sql);
-$stats = $stats_result ? $stats_result->fetch_assoc() : [];
+$stats = [];
+if ($types) {
+    $stmt_stats = $conn->prepare($stats_sql);
+    if ($stmt_stats) {
+        $bind_params = array_merge([$types], $params);
+        $ref_params = [];
+        foreach ($bind_params as $key => $value) {
+            $ref_params[$key] = &$bind_params[$key];
+        }
+        call_user_func_array([$stmt_stats, 'bind_param'], $ref_params);
+        $stmt_stats->execute();
+        $res_stats = $stmt_stats->get_result();
+        $stats = $res_stats->fetch_assoc();
+    }
+} else {
+    $stats_result = $conn->query($stats_sql);
+    $stats = $stats_result ? $stats_result->fetch_assoc() : [];
+}
 ?>
 
 <!DOCTYPE html>
@@ -129,38 +145,55 @@ $stats = $stats_result ? $stats_result->fetch_assoc() : [];
 <head>
 <meta charset="UTF-8">
 <title>Activity Log - HGMA System</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
-    body { background: #f5f7fa; color: #2c3e50; min-height: 100vh; }
+    body { background: #f5f7fa; color: #2c3e50; min-height: 100vh; overflow-x: hidden; }
+
+    /* --- SIDEBAR STYLES (Responsive) --- */
+    .sidebar { 
+        position: fixed; left: 0; top: 0; width: 260px; height: 100vh; 
+        background: #1e3a5f; color: #fff; padding: 30px 0; 
+        display: flex; flex-direction: column; 
+        box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1); 
+        z-index: 1000; overflow-y: auto;
+        transition: transform 0.3s ease-in-out; 
+    }
     
-    .sidebar { position: fixed; left: 0; top: 0; width: 260px; height: 100vh; background: #1e3a5f; color: #fff; padding: 30px 0; display: flex; flex-direction: column; z-index: 1000; box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1); }
-    .sidebar-header { padding: 0 25px 30px 25px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
-    .sidebar-header h2 { font-size: 1.4rem; font-weight: 600; margin-bottom: 5px; }
-    .sidebar-header p { font-size: 0.85rem; color: rgba(255,255,255,0.7); }
+    .sidebar-header { padding: 0 25px 30px 25px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 20px; }
+    .sidebar-header h2 { font-weight: 600; font-size: 1.4rem; color: #fff; margin-bottom: 5px; }
+    .sidebar-header p { font-size: 0.85rem; color: rgba(255, 255, 255, 0.7); }
+    
     .sidebar-nav { flex: 1; padding: 0 15px; }
-    .sidebar a { text-decoration: none; color: rgba(255, 255, 255, 0.85); display: flex; align-items: center; padding: 14px 18px; margin: 5px 0; border-radius: 10px; transition: all 0.3s ease; font-weight: 500; }
-    .sidebar a i { margin-right: 14px; width: 20px; text-align: center; }
-    .sidebar a:hover { background: rgba(255,255,255,0.1); color: #fff; transform: translateX(5px); }
+    .sidebar a { text-decoration: none; color: rgba(255, 255, 255, 0.85); display: flex; align-items: center; padding: 14px 18px; margin: 5px 0; border-radius: 10px; transition: all 0.3s ease; font-weight: 500; font-size: 0.95rem; }
+    .sidebar a i { margin-right: 14px; font-size: 1.1rem; width: 20px; text-align: center; }
+    .sidebar a:hover { background: rgba(255, 255, 255, 0.1); color: #fff; transform: translateX(5px); }
     .sidebar a.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
-    .logout-section { padding: 0 15px 20px 15px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 20px; padding-top: 20px; }
-    .logout-btn { width: 100%; padding: 12px; background: #dc3545; color: #fff; border: none; border-radius: 10px; cursor: pointer; font-weight: 600; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; }
+    
+    .logout-section { padding: 0 15px 20px 15px; border-top: 1px solid rgba(255, 255, 255, 0.1); margin-top: 20px; padding-top: 20px; }
+    .logout-btn { width: 100%; padding: 12px 18px; background: #dc3545; color: #fff; border: none; border-radius: 10px; cursor: pointer; transition: all 0.3s ease; font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; justify-content: center; }
     .logout-btn:hover { background: #c82333; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3); }
 
-    .main-content { margin-left: 260px; padding: 35px 40px; }
-    .page-header { margin-bottom: 30px; background: #fff; padding: 25px 30px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-    .page-title h1 { font-size: 1.6rem; color: #1e3a5f; font-weight: 700; }
-    .page-title p { color: #7f8c8d; font-size: 0.9rem; margin-top: 5px; }
+    /* --- MAIN CONTENT & HEADER --- */
+    .main-content { margin-left: 260px; padding: 35px 40px; min-height: 100vh; transition: margin-left 0.3s ease-in-out; }
+    
+    .header { margin-bottom: 35px; background: #fff; padding: 20px 30px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); display: flex; align-items: center; justify-content: space-between; }
+    .page-title h1 { font-size: 1.5rem; font-weight: 700; color: #1e3a5f; margin: 0; }
+    .page-title p { color: #7f8c8d; font-size: 0.9rem; margin-top: 5px; margin-bottom: 0; }
+    
+    .menu-toggle { display: none; font-size: 1.5rem; color: #1e3a5f; cursor: pointer; margin-right: 15px; }
 
+    /* --- STATS GRID --- */
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
     .stat-card { background: #fff; border-radius: 15px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); display: flex; align-items: center; gap: 15px; transition: all 0.3s ease; }
     .stat-card:hover { transform: translateY(-5px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
-    .stat-icon { width: 50px; height: 50px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+    .stat-icon { width: 50px; height: 50px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
     .stat-content h4 { font-size: 0.8rem; color: #7f8c8d; font-weight: 500; margin-bottom: 5px; }
     .stat-content p { font-size: 1.4rem; font-weight: 700; color: #1e3a5f; }
-    
+
+    /* Stat Colors */
     .icon-total { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
     .icon-users { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
     .icon-login { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; }
@@ -169,58 +202,128 @@ $stats = $stats_result ? $stats_result->fetch_assoc() : [];
     .icon-checkout { background: linear-gradient(135deg, #30cfd0 0%, #330867 100%); color: #fff; }
     .icon-payment { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); color: #333; }
 
+    /* --- FILTERS & FORMS --- */
     .filter-card { background: #fff; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 25px; }
-    .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; align-items: end; }
-    .form-group { display: flex; flex-direction: column; }
+    .filter-grid { display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; }
+    .form-group { flex: 1; min-width: 150px; display: flex; flex-direction: column; }
     .form-label { font-weight: 600; margin-bottom: 8px; color: #1e3a5f; font-size: 0.9rem; }
-    .form-control { padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; font-size: 0.95rem; transition: all 0.3s ease; background: #f8f9fa; }
-    .form-control:focus { outline: none; border-color: #667eea; background: #fff; }
+    .form-control { padding: 10px 15px; border: 2px solid #e9ecef; border-radius: 10px; font-size: 0.95rem; background: #f8f9fa; width: 100%; }
     
     .btn-group { display: flex; gap: 10px; }
-    .btn-filter { padding: 12px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; transition: all 0.3s ease; }
-    .btn-filter:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4); }
-    .btn-clear { padding: 12px 20px; background: #6c757d; color: #fff; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; transition: all 0.3s ease; text-decoration: none; display: inline-block; }
-
-    .table-container { background: #fff; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-    .scroll-area { max-height: 420px; overflow-y: auto; border: 1px solid #edf2f7; }
-    table { width: 100%; border-collapse: collapse; min-width: 900px; }
-    th, td { padding: 15px; text-align: left; border-bottom: 1px solid #edf2f7; }
-    th { position: sticky; top: 0; background-color: #1e3a5f; color: #fff; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; z-index: 10; }
-    tbody tr:hover { background-color: #f8fafc; }
+    .btn-filter { padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .btn-clear { padding: 10px 20px; background: #6c757d; color: #fff; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
     
-    .badge { padding: 6px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; }
-    .btn-del { color: #dc3545; background: none; border: none; cursor: pointer; transition: 0.3s; }
-    .btn-del:hover { color: #842029; transform: scale(1.1); }
-    .bulk-del-card { background: #fff5f5; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #feb2b2; display: flex; align-items: center; gap: 15px; }
+    /* Bulk Delete Section */
+    .bulk-del-card { background: #fff5f5; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #feb2b2; display: flex; flex-wrap: wrap; align-items: center; gap: 15px; }
+    .bulk-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
-    /* Badge Colors */
+    /* --- TABLE (Responsive) --- */
+    .table-container { background: #fff; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    th, td { padding: 15px; text-align: left; border-bottom: 1px solid #edf2f7; white-space: nowrap; }
+    th { background-color: #f8fafc; color: #64748b; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }
+    tbody tr:hover { background-color: #f8fafc; }
+
+    /* Badges */
+    .badge { padding: 6px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; }
     .badge-login { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; }
     .badge-guest { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: #fff; }
     .badge-checkin { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #fff; }
     .badge-checkout { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
     .badge-payment { background: linear-gradient(135deg, #28a745, #20c997); color: #fff; }
     .badge-default { background: #e2e3e5; color: #383d41; }
+    
+    .btn-del { color: #dc3545; background: none; border: none; cursor: pointer; font-size: 1.1rem; }
 
-    @media (max-width: 768px) { .sidebar { width: 70px; } .sidebar-header h2, .sidebar-header p, .sidebar a span { display: none; } .main-content { margin-left: 70px; padding: 20px; } }
+    /* --- MOBILE OVERLAY --- */
+    .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 900; backdrop-filter: blur(2px); }
+
+    /* --- RESPONSIVE MEDIA QUERIES --- */
+    @media (max-width: 768px) {
+        /* Sidebar Logic */
+        .sidebar { transform: translateX(-100%); width: 260px; } 
+        .sidebar.active { transform: translateX(0); }
+        .sidebar-overlay.active { display: block; }
+        
+        /* Content Adjustments */
+        .main-content { margin-left: 0; padding: 20px 15px; }
+        .header { padding: 15px; justify-content: flex-start; gap: 15px; }
+        .menu-toggle { display: block; }
+        
+        /* Stacking Filters */
+        .filter-grid { flex-direction: column; align-items: stretch; }
+        .btn-group { width: 100%; }
+        .btn-filter, .btn-clear { flex: 1; text-align: center; }
+        
+        /* Stats Grid */
+        .stats-grid { grid-template-columns: 1fr 1fr; }
+        
+        /* Bulk Delete Stacking */
+        .bulk-del-card { flex-direction: column; align-items: stretch; }
+        .bulk-form { flex-direction: column; width: 100%; }
+        .bulk-form input { width: 100%; }
+        .bulk-form button { width: 100%; }
+        
+        .table-container { padding: 15px; }
+    }
+    
+    @media (max-width: 480px) {
+        .stats-grid { grid-template-columns: 1fr; }
+    }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
-    <div class="sidebar-header"><h2>HGMA System</h2><p>Hotel Management</p></div>
-    <div class="sidebar-nav">
-        <a href="manager_dashboard.php"><i class="fa-solid fa-house"></i> <span>Dashboard</span></a>
-        <a href="manage_staff.php"><i class="fa-solid fa-user-shield"></i> <span>Manage Staff</span></a>
-        <a href="room_details.php"><i class="fa-solid fa-bed"></i> <span>Room Details</span></a>
-        <a href="payment_reports.php"><i class="fa-solid fa-credit-card"></i> <span>Payment Reports</span></a>
-        <a href="analytics.php"><i class="fa-solid fa-chart-line"></i> <span>Analytics</span></a>
-        <a href="activity_log.php" class="active"><i class="fa-solid fa-clipboard-list"></i> <span>Activity Log</span></a>
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h2>HGMA System</h2>
+        <p>Hotel Management</p>
     </div>
-    <div class="logout-section"><form action="logout.php" method="POST"><button type="submit" class="logout-btn"><i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span></button></form></div>
+    <div class="sidebar-nav">
+        <a href="manager_dashboard.php" class="<?= $currentPage=='manager_dashboard.php'?'active':'' ?>">
+            <i class="fa-solid fa-house"></i> <span>Dashboard</span>
+        </a>
+        <a href="manage_staff.php" class="<?= $currentPage=='manage_staff.php'?'active':'' ?>">
+            <i class="fa-solid fa-user-shield"></i> <span>Manage Staff</span>
+        </a>
+        <a href="room_details.php" class="<?= $currentPage=='room_details.php'?'active':'' ?>">
+            <i class="fa-solid fa-bed"></i> <span>Room Details</span>
+        </a>
+        <a href="payment_reports.php" class="<?= $currentPage=='payment_reports.php'?'active':'' ?>">
+            <i class="fa-solid fa-credit-card"></i> <span>Payment Reports</span>
+        </a>
+        <a href="analytics.php" class="<?= $currentPage=='analytics.php'?'active':'' ?>">
+            <i class="fa-solid fa-chart-line"></i> <span>Analytics</span>
+        </a>
+        <a href="activity_log.php" class="<?= $currentPage=='activity_log.php'?'active':'' ?>">
+            <i class="fa-solid fa-clipboard-list"></i> <span>Activity Log</span>
+        </a>
+        <a href="db_maintenance.php" class="<?= $currentPage=='db_maintenance.php'?'active':'' ?>">
+            <i class="fa-solid fa-screwdriver-wrench"></i> <span>Maintenance</span>
+        </a>
+    </div>
+    <div class="logout-section">
+        <form action="logout.php" method="POST">
+            <button type="submit" class="logout-btn">
+                <i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span>
+            </button>
+        </form>
+    </div>
 </div>
 
 <div class="main-content">
-    <div class="page-header"><div class="page-title"><h1><i class="fa-solid fa-clipboard-list"></i> Activity Log</h1><p>Monitor all system activities</p></div></div>
+    <div class="header">
+        <div style="display:flex; align-items:center;">
+            <i class="fa-solid fa-bars menu-toggle" onclick="toggleSidebar()"></i>
+            <div class="page-title">
+                <h1><i class="fa-solid fa-clipboard-list"></i> Activity Log</h1>
+                <p>Monitor all system activities</p>
+            </div>
+        </div>
+    </div>
 
     <div class="stats-grid">
         <div class="stat-card">
@@ -291,17 +394,17 @@ $stats = $stats_result ? $stats_result->fetch_assoc() : [];
     </div>
 
     <div class="bulk-del-card">
-        <div style="flex:1;"><strong><i class="fa-solid fa-trash-can"></i> Bulk Delete:</strong>Delete Multiple Logs at Once </div>
-        <form method="POST" style="display:flex; gap:10px; align-items:center;">
+        <div style="flex:1;"><strong><i class="fa-solid fa-trash-can"></i> Bulk Delete:</strong> Delete Multiple Logs at Once </div>
+        <form method="POST" class="bulk-form">
             <input type="date" name="del_from" class="form-control" style="padding:5px;" required>
             <span> to </span>
             <input type="date" name="del_to" class="form-control" style="padding:5px;" required>
-            <button type="submit" name="bulk_delete" class="btn-filter" style="background:red; padding:8px 15px;" onclick="return confirm('Je unataka kufuta kabisa logs hizi?')">Futa Range</button>
+            <button type="submit" name="bulk_delete" class="btn-filter" style="background:#dc3545; padding:8px 15px;" onclick="return confirm('Do you want to delete all this logs?')">Delete</button>
         </form>
     </div>
 
     <div class="table-container">
-        <div class="scroll-area">
+        <div class="table-responsive">
             <table>
                 <thead>
                     <tr>
@@ -329,7 +432,7 @@ $stats = $stats_result ? $stats_result->fetch_assoc() : [];
                             <td><?= htmlspecialchars(ucfirst($row['role'])) ?></td>
                             <td><span class="badge <?= $action_class ?>"><?= htmlspecialchars($row['action']) ?></span></td>
                             <td><?= htmlspecialchars($row['description']) ?></td>
-                            <td><a href="activity_log.php?delete_id=<?= $row['log_id'] ?>" class="btn-del" onclick="return confirm('Futa log hii?')"><i class="fa-solid fa-trash"></i></a></td>
+                            <td><a href="activity_log.php?delete_id=<?= $row['log_id'] ?>" class="btn-del" onclick="return confirm('Delete this?')"><i class="fa-solid fa-trash"></i></a></td>
                         </tr>
                     <?php endwhile; else: ?>
                         <tr><td colspan="6" class="text-center no-data">No activities found.</td></tr>
@@ -339,6 +442,13 @@ $stats = $stats_result ? $stats_result->fetch_assoc() : [];
         </div>
     </div>
 </div>
+
+<script>
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('active');
+        document.querySelector('.sidebar-overlay').classList.toggle('active');
+    }
+</script>
 
 </body>
 </html>

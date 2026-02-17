@@ -50,7 +50,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'backup') {
     exit;
 }
 
-// --- 2. HANDLE OPTIMIZATION (Feature iliyokosekana imerudi) ---
+// --- 2. HANDLE OPTIMIZATION ---
 if (isset($_POST['action']) && $_POST['action'] == 'optimize') {
     $tables_query = $conn->query("SHOW TABLES");
     if ($tables_query) {
@@ -75,20 +75,32 @@ if (isset($_POST['action']) && $_POST['action'] == 'optimize') {
 // --- 3. HANDLE SYSTEM RESET (WIPE DATA) ---
 if (isset($_POST['action']) && $_POST['action'] == 'reset_system') {
     $conn->query("SET FOREIGN_KEY_CHECKS = 0");
-    $tables_to_wipe = ['guest', 'payments', 'bookings', 'activity_log'];
+    
+    // HAPA: Nimeongeza 's' kwenye activity_logs
+    $tables_to_wipe = ['guest', 'payments', 'bookings', 'activity_logs'];
+    
     $success = true;
     foreach ($tables_to_wipe as $table) {
-        if (!$conn->query("TRUNCATE TABLE $table")) {
-            $success = false;
-            $message = "Error wiping table $table: " . $conn->error;
-            $msg_type = "error";
-            break;
+        // Tunahakikisha table ipo kabla ya kujaribu kuifuta ili kuepuka error
+        $check = $conn->query("SHOW TABLES LIKE '$table'");
+        if($check->num_rows > 0) {
+            if (!$conn->query("TRUNCATE TABLE $table")) {
+                $success = false;
+                $message = "Error wiping table $table: " . $conn->error;
+                $msg_type = "error";
+                break;
+            }
         }
     }
+
     if ($success) {
         $conn->query("UPDATE rooms SET status = 'AVAILABLE'");
-        $user_id = $_SESSION['user_id'];
-        $conn->query("INSERT INTO activity_log (user_id, action, details) VALUES ('$user_id', 'SYSTEM RESET', 'All operational data wiped for fresh start.')");
+        
+        // HAPA: Nimebadilisha INSERT ifanane na structure ya table yako (kama payments.php)
+        // Kutumia 'username' na 'description' badala ya 'user_id' na 'details'
+        $log_desc = "All operational data wiped for fresh start.";
+        $conn->query("INSERT INTO activity_logs (username, role, action, description) VALUES ('$fullname', 'Manager', 'SYSTEM RESET', '$log_desc')");
+        
         $message = "System Reset Successful! Data wiped.";
         $msg_type = "success";
     }

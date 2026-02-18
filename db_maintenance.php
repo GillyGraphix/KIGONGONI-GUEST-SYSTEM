@@ -8,6 +8,8 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['manager', 'ad
     exit();
 }
 
+// --- MAREKEBISHO 1: Tunachukua User ID hapa ---
+$user_id = $_SESSION['user_id']; // Hii ni muhimu kwa ajili ya database
 $fullname = $_SESSION['fullname'] ?? 'Manager';
 $currentPage = basename($_SERVER['PHP_SELF']);
 $message = "";
@@ -76,12 +78,10 @@ if (isset($_POST['action']) && $_POST['action'] == 'optimize') {
 if (isset($_POST['action']) && $_POST['action'] == 'reset_system') {
     $conn->query("SET FOREIGN_KEY_CHECKS = 0");
     
-    // HAPA: Nimeongeza 's' kwenye activity_logs
     $tables_to_wipe = ['guest', 'payments', 'bookings', 'activity_logs'];
     
     $success = true;
     foreach ($tables_to_wipe as $table) {
-        // Tunahakikisha table ipo kabla ya kujaribu kuifuta ili kuepuka error
         $check = $conn->query("SHOW TABLES LIKE '$table'");
         if($check->num_rows > 0) {
             if (!$conn->query("TRUNCATE TABLE $table")) {
@@ -96,13 +96,27 @@ if (isset($_POST['action']) && $_POST['action'] == 'reset_system') {
     if ($success) {
         $conn->query("UPDATE rooms SET status = 'AVAILABLE'");
         
-        // HAPA: Nimebadilisha INSERT ifanane na structure ya table yako (kama payments.php)
-        // Kutumia 'username' na 'description' badala ya 'user_id' na 'details'
         $log_desc = "All operational data wiped for fresh start.";
-        $conn->query("INSERT INTO activity_logs (username, role, action, description) VALUES ('$fullname', 'Manager', 'SYSTEM RESET', '$log_desc')");
         
-        $message = "System Reset Successful! Data wiped.";
-        $msg_type = "success";
+        // --- MAREKEBISHO 2: Nimeongeza user_id kwenye INSERT ---
+        // Hapa tunaingiza user_id ili Live Server isilalamike
+        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, username, role, action, description) VALUES (?, ?, ?, ?, ?)");
+        $role = 'Manager'; // Au chukua $_SESSION['role']
+        $action = 'SYSTEM RESET';
+        
+        // Kama table yako haina column ya 'role' au 'username', futa hizo sehemu kwenye query hii
+        // Lakini kwa error uliyopata mwanzo, shida kubwa ilikuwa user_id
+        $stmt->bind_param("issss", $user_id, $fullname, $role, $action, $log_desc);
+        
+        if($stmt->execute()) {
+             $message = "System Reset Successful! Data wiped.";
+             $msg_type = "success";
+        } else {
+             // Fallback kama kuna shida, jaribu bila user_id (kama table imebadilishwa)
+             // Lakini kwa error yako, ile ya juu ndio sahihi.
+             $message = "Reset done, but log failed: " . $conn->error;
+             $msg_type = "warning";
+        }
     }
     $conn->query("SET FOREIGN_KEY_CHECKS = 1");
 }
@@ -160,16 +174,13 @@ function formatSize($bytes) {
     .menu-toggle { display: none; font-size: 1.5rem; color: #1e3a5f; cursor: pointer; }
     .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 900; }
 
-    /* --- MAINTENANCE SPECIFIC STYLES (Compatible with Dashboard) --- */
-    
-    /* Health Stats (Reusing Dashboard Stats Style) */
+    /* STATS & CARDS */
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 35px; }
     .stat-card { background: #fff; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); border-left: 4px solid #667eea; transition: all 0.3s ease; }
     .stat-card:hover { transform: translateY(-5px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1); }
     .stat-card h3 { font-size: 0.9rem; font-weight: 600; color: #7f8c8d; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
     .stat-card p { font-size: 1.8rem; font-weight: 700; color: #1e3a5f; }
 
-    /* Action Cards (Reusing Dashboard Cards Style) */
     .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 25px; margin-bottom: 35px; }
     .card { background: #fff; border-radius: 15px; padding: 35px 30px; text-align: center; cursor: pointer; transition: all 0.4s ease; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); border: 2px solid transparent; position: relative; }
     .card:hover { transform: translateY(-8px); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15); border-color: #667eea; }
@@ -228,7 +239,7 @@ function formatSize($bytes) {
         <a href="activity_log.php" class="<?= $currentPage=='activity_log.php'?'active':'' ?>">
             <i class="fa-solid fa-clipboard-list"></i> <span>Activity Log</span>
         </a>
-        <a href="db_maintenance.php" class="<?= $currentPage=='db_maintenance.php'?'active':'' ?>">
+        <a href="db_maintenance.php" class="active">
             <i class="fa-solid fa-screwdriver-wrench"></i> <span>Maintenance</span>
         </a>
     </div>

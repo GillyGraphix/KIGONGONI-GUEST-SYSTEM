@@ -160,7 +160,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $country = $_POST['country'] ?? '';
         $passport_id = $_POST['passport_id'] ?? '';
         $passport_country = $_POST['passport_country'] ?? '';
-        $passport_expiry = $_POST['passport_expiry'] ?? '';
+
+        // MAREKEBISHO HAPA: Badilisha string tupu kuwa NULL kwa ajili ya seva
+        $passport_expiry = !empty($_POST['passport_expiry']) ? $_POST['passport_expiry'] : null;
+
         $company_name = $_POST['company_name'] ?? '';
         $company_address = $_POST['company_address'] ?? '';
         $room_name = $_POST['room_name'] ?? '';
@@ -292,9 +295,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .form-group { display: flex; flex-direction: column; }
     .form-label { font-weight: 600; margin-bottom: 8px; color: #2c3e50; font-size: 0.9rem; }
     .form-label .required { color: #dc3545; margin-left: 3px; }
-    .form-control { width: 100%; padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; font-size: 0.95rem; transition: all 0.3s ease; background: #f8f9fa; }
+    
+    /* REKEBISHO YA RANGI YA MAANDISHI HAPA */
+    .form-control { 
+        width: 100%; padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; 
+        font-size: 0.95rem; transition: all 0.3s ease; background: #f8f9fa; 
+        color: #000 !important; /* Herufi nyeusi kabisa */
+    }
     .form-control:focus { outline: none; border-color: #667eea; background: #fff; }
-    .form-control:read-only { background: #e9ecef; color: #7f8c8d; }
+    
+    /* Inafanya maandishi ya select na readonly yaonekane vizuri */
+    select.form-control { color: #1e3a5f !important; font-weight: 500; }
+    .form-control:read-only { background: #e9ecef; color: #000 !important; font-weight: 600; }
     
     /* Checkbox & Dropdown */
     .form-check { display: flex; align-items: center; gap: 10px; padding-top: 15px; }
@@ -302,10 +314,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .form-check-label { font-weight: 500; color: #2c3e50; cursor: pointer; font-size: 0.95rem; }
 
     .custom-dropdown { position: relative; width: 100%; }
-    .dropdown-trigger { padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; background: #f8f9fa; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: 0.3s; }
+    .dropdown-trigger { padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; background: #f8f9fa; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: 0.3s; color: #1e3a5f; font-weight: 600; }
     .dropdown-content { display: none; position: absolute; top: 100%; left: 0; width: 100%; max-height: 250px; overflow-y: auto; background: #fff; border: 1px solid #ddd; border-radius: 0 0 10px 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); z-index: 100; margin-top: 5px; }
     .dropdown-content.show { display: block; }
-    .dropdown-item { padding: 10px 15px; border-bottom: 1px solid #f1f1f1; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+    .dropdown-item { padding: 10px 15px; border-bottom: 1px solid #f1f1f1; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #000; }
     .dropdown-item:hover { background: #f8f9fa; }
 
     /* Action Buttons & Notices */
@@ -442,7 +454,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <?php foreach($available_rooms as $room): ?>
                             <div class="dropdown-item">
                                 <input type="checkbox" name="selected_rooms[]" id="room_<?= $room['room_name'] ?>" value="<?= htmlspecialchars($room['room_name']) ?>" data-rate="<?= $room['room_rate'] ?>" class="room-checkbox" style="width:18px; height:18px;">
-                                <label for="room_<?= $room['room_name'] ?>" style="cursor:pointer; width:100%;">Room <?= htmlspecialchars($room['room_name']) ?> - <?= htmlspecialchars($room['room_type']) ?> <small style="color:#666;">(TZS <?= number_format($room['room_rate']) ?>)</small></label>
+                                <label for="room_<?= $room['room_name'] ?>" style="cursor:pointer; width:100%; color: #000;">Room <?= htmlspecialchars($room['room_name']) ?> - <?= htmlspecialchars($room['room_type']) ?> <small style="color:#666;">(TZS <?= number_format($room['room_rate']) ?>)</small></label>
                             </div>
                             <?php endforeach; ?>
                             <?php if(empty($available_rooms)): ?><div class="dropdown-item" style="color: #dc3545;">No rooms available.</div><?php endif; ?>

@@ -44,7 +44,6 @@ function calculatePaymentStatus($guest_id, $conn) {
 // --- FUNCTION TO UPDATE ALL PAYMENT STATUSES FOR A GUEST ---
 function updateGuestPaymentStatuses($guest_id, $conn) {
     $status = calculatePaymentStatus($guest_id, $conn);
-    // REKEBISHO: Tumetumia 'payment_status' badala ya 'status' kuendana na Error yako
     $update_stmt = $conn->prepare("UPDATE payments SET payment_status = ? WHERE guest_id = ?");
     $update_stmt->bind_param("si", $status, $guest_id);
     $update_stmt->execute();
@@ -92,7 +91,6 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_receipt' && isset($_GET['p
             $balance = 0;
         }
         
-        // REKEBISHO: Tumetumia payment_status badala ya status
         $status_class = strtolower($row['payment_status']);
         ?>
 <!DOCTYPE html>
@@ -230,23 +228,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_payment'])) {
     }
 
     if ($guest_id > 0 && $amount >= 0 && $payment_method && $payment_date) {
-        // MAREKEBISHO: Tumetumia 'payment_status' badala ya 'status' kuendana na Database yako
         $stmt = $conn->prepare("INSERT INTO payments (guest_id, guest_name, room_id, room_name, amount, payment_method, payment_date, reference_number, payment_status, discount, extra_charges, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?, ?)");
         
         if (!$stmt) {
             $error = "Prepare failed: " . $conn->error;
         } else {
-            $bind_result = $stmt->bind_param("isisssssdds", $guest_id, $current_guest_name, $room_id, $current_room_name, $amount, $payment_method, $payment_date, $reference_number, $discount, $extra_charges, $notes);
+            $stmt->bind_param("isisssssdds", $guest_id, $current_guest_name, $room_id, $current_room_name, $amount, $payment_method, $payment_date, $reference_number, $discount, $extra_charges, $notes);
             
             if ($stmt->execute()) {
                 $new_status = updateGuestPaymentStatuses($guest_id, $conn);
                 
+                // MAREKEBISHO: Tumeongeza 'user_id' ili kuzuia Fatal Error
                 $receptionist_name = $_SESSION['fullname'] ?? $_SESSION['username'];
-                $log_desc = "Received TZS " . number_format($amount, 2) . " from $current_guest_name (Room: $current_room_name). Method: $payment_method";
-                if ($extra_charges > 0) $log_desc .= " [Extra: " . number_format($extra_charges) . "]";
-                $conn->query("INSERT INTO activity_logs (username, role, action, description, timestamp) VALUES ('$receptionist_name', 'Receptionist', 'Payment Received', '$log_desc', NOW())");
+                $current_user_id = $_SESSION['user_id']; 
+                $log_desc = "Received TZS " . number_format($amount, 2) . " from $current_guest_name (Room: $current_room_name). Status: $new_status";
                 
-                $success = "Payment recorded successfully! Status: $new_status";
+                $conn->query("INSERT INTO activity_logs (user_id, username, role, action, description, timestamp) VALUES ('$current_user_id', '$receptionist_name', 'Receptionist', 'Payment Received', '$log_desc', NOW())");
+                
+                $success = "Payment recorded successfully! Current Status: $new_status";
             } else {
                 $error = "Execute failed: " . $stmt->error;
             }
@@ -292,7 +291,6 @@ if ($search_guest) {
 $where_sql = count($where_clauses) > 0 ? "WHERE " . implode(" AND ", $where_clauses) : "";
 
 $payment_history = [];
-// MAREKEBISHO: 'payment_status' badala ya 'status'
 $history_query = "SELECT p.payment_id, p.guest_id, COALESCE(NULLIF(p.guest_name, ''), CONCAT(g.first_name, ' ', g.last_name)) as display_name, COALESCE(NULLIF(p.room_name, ''), g.room_name) as display_room, (p.amount + p.extra_charges - p.discount) AS net_amount, p.amount, p.payment_method, p.payment_date, p.payment_status, p.reference_number, p.discount, p.extra_charges, g.room_rate, DATEDIFF(g.checkout_date, g.checkin_date) as nights FROM payments p LEFT JOIN guest g ON p.guest_id = g.guest_id $where_sql ORDER BY p.payment_date DESC, p.payment_id DESC LIMIT 50";
 
 if ($types) {
@@ -340,7 +338,7 @@ $pending_count = $conn->query("SELECT COUNT(DISTINCT guest_id) as count FROM pay
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-/* ... (CSS STYLES BAKI VILEVILE) ... */
+/* CSS STYLE ... (BAKI VILEVILE) */
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
 body { background: #f5f7fa; color: #2c3e50; min-height: 100vh; }
 .sidebar { position: fixed; left: 0; top: 0; width: 260px; height: 100vh; background: #1e3a5f; color: #fff; padding: 30px 0; display: flex; flex-direction: column; box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1); z-index: 1000; transition: transform 0.3s ease-in-out; }

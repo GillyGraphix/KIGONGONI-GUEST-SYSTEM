@@ -117,7 +117,8 @@ $stats_sql = "SELECT
                 COUNT(CASE WHEN action LIKE '%guest%' THEN 1 END) as guest_actions,
                 COUNT(CASE WHEN action LIKE '%check%in%' THEN 1 END) as checkin_count,
                 COUNT(CASE WHEN action LIKE '%check%out%' THEN 1 END) as checkout_count,
-                COUNT(CASE WHEN action LIKE '%payment%' THEN 1 END) as payment_count
+                COUNT(CASE WHEN action LIKE '%payment%' THEN 1 END) as payment_count,
+                COUNT(CASE WHEN action LIKE '%delete%' THEN 1 END) as delete_count
               FROM activity_logs $where_sql";
 
 $stats = [];
@@ -201,6 +202,7 @@ if ($types) {
     .icon-checkin { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #fff; }
     .icon-checkout { background: linear-gradient(135deg, #30cfd0 0%, #330867 100%); color: #fff; }
     .icon-payment { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); color: #333; }
+    .icon-delete { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: #fff; }
 
     /* --- FILTERS & FORMS --- */
     .filter-card { background: #fff; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 25px; }
@@ -232,6 +234,7 @@ if ($types) {
     .badge-checkin { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #fff; }
     .badge-checkout { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
     .badge-payment { background: linear-gradient(135deg, #28a745, #20c997); color: #fff; }
+    .badge-delete { background: linear-gradient(135deg, #dc3545, #c82333); color: #fff; }
     .badge-default { background: #e2e3e5; color: #383d41; }
     
     .btn-del { color: #dc3545; background: none; border: none; cursor: pointer; font-size: 1.1rem; }
@@ -354,6 +357,11 @@ if ($types) {
             <div class="stat-icon icon-payment"><i class="fa-solid fa-credit-card"></i></div>
             <div class="stat-content"><h4>Payments</h4><p><?= number_format($stats['payment_count'] ?? 0) ?></p></div>
         </div>
+        <!-- NEW: Delete Actions stat card -->
+        <div class="stat-card">
+            <div class="stat-icon icon-delete"><i class="fa-solid fa-trash-can"></i></div>
+            <div class="stat-content"><h4>Delete Actions</h4><p><?= number_format($stats['delete_count'] ?? 0) ?></p></div>
+        </div>
     </div>
 
     <div class="filter-card">
@@ -377,6 +385,8 @@ if ($types) {
                     <option value="check-in" <?= $filter_action == 'check-in' ? 'selected' : '' ?>>Check-in</option>
                     <option value="check-out" <?= $filter_action == 'check-out' ? 'selected' : '' ?>>Check-out</option>
                     <option value="payment" <?= $filter_action == 'payment' ? 'selected' : '' ?>>Payment</option>
+                    <!-- NEW: Delete filter option -->
+                    <option value="delete" <?= $filter_action == 'delete' ? 'selected' : '' ?>>Delete Actions</option>
                 </select>
             </div>
             <div class="form-group">
@@ -424,6 +434,7 @@ if ($types) {
                         elseif (strpos($act, 'payment') !== false) $action_class = 'badge-payment';
                         elseif (strpos($act, 'check-in') !== false) $action_class = 'badge-checkin';
                         elseif (strpos($act, 'check-out') !== false) $action_class = 'badge-checkout';
+                        elseif (strpos($act, 'delete') !== false) $action_class = 'badge-delete'; // NEW
                         elseif (strpos($act, 'guest') !== false) $action_class = 'badge-guest';
                     ?>
                         <tr>

@@ -76,11 +76,30 @@ if (isset($_POST['action'])) {
     }
     
     if ($_POST['action'] == 'delete') {
+        // --- CHUKUA TAARIFA ZA MGENI KABLA YA KUFUTA ---
+        $info_q = mysqli_query($conn, "SELECT CONCAT(g.first_name, ' ', g.last_name) AS full_name, g.room_name, g.room_type, c.days_stayed, c.total_amount FROM guest g LEFT JOIN checkin_checkout c ON c.guest_id = g.guest_id WHERE g.guest_id='$guest_id_safe'");
+        $guest_info = mysqli_fetch_assoc($info_q);
+
         $q = mysqli_query($conn, "SELECT room_name FROM guest WHERE guest_id='$guest_id_safe'");
         if ($row = mysqli_fetch_assoc($q)) {
             mysqli_query($conn, "UPDATE rooms SET status='Available' WHERE room_name='{$row['room_name']}'");
             mysqli_query($conn, "DELETE FROM checkin_checkout WHERE guest_id='$guest_id_safe'");
             mysqli_query($conn, "DELETE FROM guest WHERE guest_id='$guest_id_safe'");
+
+            // --- LOG ACTIVITY YA DELETE ---
+            $log_user     = mysqli_real_escape_string($conn, $_SESSION['username'] ?? 'Unknown');
+            $log_role     = mysqli_real_escape_string($conn, $_SESSION['role'] ?? 'receptionist');
+            $log_action   = "Delete Guest";
+            $guest_name   = mysqli_real_escape_string($conn, $guest_info['full_name'] ?? 'Unknown');
+            $room_name_log = mysqli_real_escape_string($conn, $guest_info['room_name'] ?? 'Unknown');
+            $room_type_log = mysqli_real_escape_string($conn, $guest_info['room_type'] ?? '');
+            $days_log     = intval($guest_info['days_stayed'] ?? 0);
+            $total_log    = number_format(floatval($guest_info['total_amount'] ?? 0), 0, '', '');
+            $log_desc     = "Deleted guest: $guest_name | Room: $room_name_log ($room_type_log) | Days: $days_log | Total Bill: TZS $total_log";
+
+            mysqli_query($conn, "INSERT INTO activity_logs (username, role, action, description, timestamp) VALUES ('$log_user', '$log_role', '$log_action', '$log_desc', NOW())");
+            // --- MWISHO WA LOGGING ---
+
             $response = ['status' => 'success', 'message' => 'Record deleted.'];
         }
     }

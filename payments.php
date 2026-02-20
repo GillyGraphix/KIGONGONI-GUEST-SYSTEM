@@ -44,14 +44,15 @@ function calculatePaymentStatus($guest_id, $conn) {
 // --- FUNCTION TO UPDATE ALL PAYMENT STATUSES FOR A GUEST ---
 function updateGuestPaymentStatuses($guest_id, $conn) {
     $status = calculatePaymentStatus($guest_id, $conn);
-    $update_stmt = $conn->prepare("UPDATE payments SET status = ? WHERE guest_id = ?");
+    // REKEBISHO: Tumetumia 'payment_status' badala ya 'status' kuendana na Error yako
+    $update_stmt = $conn->prepare("UPDATE payments SET payment_status = ? WHERE guest_id = ?");
     $update_stmt->bind_param("si", $status, $guest_id);
     $update_stmt->execute();
     $update_stmt->close();
     return $status;
 }
 
-// --- GENERATE RECEIPT (HII SEHEMU INABAKI VILEVILE KWA LOGIC) ---
+// --- GENERATE RECEIPT ---
 if (isset($_GET['action']) && $_GET['action'] == 'get_receipt' && isset($_GET['payment_id'])) {
     $payment_id = intval($_GET['payment_id']);
     
@@ -91,7 +92,8 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_receipt' && isset($_GET['p
             $balance = 0;
         }
         
-        $status_class = strtolower($row['status']);
+        // REKEBISHO: Tumetumia payment_status badala ya status
+        $status_class = strtolower($row['payment_status']);
         ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -150,7 +152,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_receipt' && isset($_GET['p
             <div class="row"><span>Total Due:</span> <strong><?= number_format($total_due, 2) ?></strong></div>
             <div class="row"><span>Total Paid:</span> <strong><?= number_format($total_paid, 2) ?></strong></div>
             <div class="row"><span>Balance:</span> <strong style="color: <?= $balance > 0 ? 'red' : 'green' ?>"><?= number_format($balance, 2) ?></strong></div>
-            <div class="row" style="margin-top:5px;"><span>Status:</span> <span class="badge bg-<?= $status_class ?>"><?= htmlspecialchars($row['status']) ?></span></div>
+            <div class="row" style="margin-top:5px;"><span>Status:</span> <span class="badge bg-<?= $status_class ?>"><?= htmlspecialchars($row['payment_status']) ?></span></div>
         </div>
 
         <?php if($row['notes']): ?>
@@ -200,7 +202,6 @@ $guest_stmt->close();
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_payment'])) {
     $guest_id = intval($_POST['guest_id']);
     
-    // Find room info from checked in array
     $room_id = 0;
     $current_guest_name = '';
     $current_room_name = '';
@@ -229,7 +230,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_payment'])) {
     }
 
     if ($guest_id > 0 && $amount >= 0 && $payment_method && $payment_date) {
-        $stmt = $conn->prepare("INSERT INTO payments (guest_id, guest_name, room_id, room_name, amount, payment_method, payment_date, reference_number, status, discount, extra_charges, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?, ?)");
+        // MAREKEBISHO: Tumetumia 'payment_status' badala ya 'status' kuendana na Database yako
+        $stmt = $conn->prepare("INSERT INTO payments (guest_id, guest_name, room_id, room_name, amount, payment_method, payment_date, reference_number, payment_status, discount, extra_charges, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?, ?)");
         
         if (!$stmt) {
             $error = "Prepare failed: " . $conn->error;
@@ -239,7 +241,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_payment'])) {
             if ($stmt->execute()) {
                 $new_status = updateGuestPaymentStatuses($guest_id, $conn);
                 
-                // LOG ACTIVITY
                 $receptionist_name = $_SESSION['fullname'] ?? $_SESSION['username'];
                 $log_desc = "Received TZS " . number_format($amount, 2) . " from $current_guest_name (Room: $current_room_name). Method: $payment_method";
                 if ($extra_charges > 0) $log_desc .= " [Extra: " . number_format($extra_charges) . "]";
@@ -291,7 +292,8 @@ if ($search_guest) {
 $where_sql = count($where_clauses) > 0 ? "WHERE " . implode(" AND ", $where_clauses) : "";
 
 $payment_history = [];
-$history_query = "SELECT p.payment_id, p.guest_id, COALESCE(NULLIF(p.guest_name, ''), CONCAT(g.first_name, ' ', g.last_name)) as display_name, COALESCE(NULLIF(p.room_name, ''), g.room_name) as display_room, (p.amount + p.extra_charges - p.discount) AS net_amount, p.amount, p.payment_method, p.payment_date, p.status, p.reference_number, p.discount, p.extra_charges, g.room_rate, DATEDIFF(g.checkout_date, g.checkin_date) as nights FROM payments p LEFT JOIN guest g ON p.guest_id = g.guest_id $where_sql ORDER BY p.payment_date DESC, p.payment_id DESC LIMIT 50";
+// MAREKEBISHO: 'payment_status' badala ya 'status'
+$history_query = "SELECT p.payment_id, p.guest_id, COALESCE(NULLIF(p.guest_name, ''), CONCAT(g.first_name, ' ', g.last_name)) as display_name, COALESCE(NULLIF(p.room_name, ''), g.room_name) as display_room, (p.amount + p.extra_charges - p.discount) AS net_amount, p.amount, p.payment_method, p.payment_date, p.payment_status, p.reference_number, p.discount, p.extra_charges, g.room_rate, DATEDIFF(g.checkout_date, g.checkin_date) as nights FROM payments p LEFT JOIN guest g ON p.guest_id = g.guest_id $where_sql ORDER BY p.payment_date DESC, p.payment_id DESC LIMIT 50";
 
 if ($types) {
     $stmt = $conn->prepare($history_query);
@@ -325,7 +327,7 @@ if ($result) {
 // --- FETCH SUMMARY STATS ---
 $today_total = $conn->query("SELECT SUM(amount + extra_charges - discount) as total FROM payments WHERE DATE(payment_date) = CURDATE()")->fetch_assoc()['total'] ?? 0;
 $month_total = $conn->query("SELECT SUM(amount + extra_charges - discount) as total FROM payments WHERE MONTH(payment_date) = MONTH(CURDATE()) AND YEAR(payment_date) = YEAR(CURDATE())")->fetch_assoc()['total'] ?? 0;
-$pending_count = $conn->query("SELECT COUNT(DISTINCT guest_id) as count FROM payments WHERE status='Pending' OR status='Partial'")->fetch_assoc()['count'] ?? 0;
+$pending_count = $conn->query("SELECT COUNT(DISTINCT guest_id) as count FROM payments WHERE payment_status='Pending' OR payment_status='Partial'")->fetch_assoc()['count'] ?? 0;
 ?>
 
 <!DOCTYPE html>
@@ -338,7 +340,7 @@ $pending_count = $conn->query("SELECT COUNT(DISTINCT guest_id) as count FROM pay
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-/* CSS STYLE COMPRESSED FOR EFFICIENCY */
+/* ... (CSS STYLES BAKI VILEVILE) ... */
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
 body { background: #f5f7fa; color: #2c3e50; min-height: 100vh; }
 .sidebar { position: fixed; left: 0; top: 0; width: 260px; height: 100vh; background: #1e3a5f; color: #fff; padding: 30px 0; display: flex; flex-direction: column; box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1); z-index: 1000; transition: transform 0.3s ease-in-out; }
@@ -627,7 +629,7 @@ table tbody tr:hover { background: #f8f9fa; }
                 <tbody>
                     <?php if (count($payment_history) > 0): ?>
                         <?php foreach ($payment_history as $payment): 
-                            $status_class = strtolower($payment['status']);
+                            $status_class = strtolower($payment['payment_status']);
                         ?>
                             <tr>
                                 <td>#<?= $payment['payment_id'] ?></td>
@@ -638,7 +640,7 @@ table tbody tr:hover { background: #f8f9fa; }
                                 <td class="text-right"><strong style="color: <?= $payment['balance'] > 0 ? '#dc3545' : '#28a745' ?>">TZS <?= number_format($payment['balance']) ?></strong></td>
                                 <td><span class="badge badge-method"><?= htmlspecialchars($payment['payment_method']) ?></span></td>
                                 <td><?= date('d M', strtotime($payment['payment_date'])) ?></td>
-                                <td><span class="badge badge-<?= $status_class ?>"><?= htmlspecialchars($payment['status']) ?></span></td>
+                                <td><span class="badge badge-<?= $status_class ?>"><?= htmlspecialchars($payment['payment_status']) ?></span></td>
                                 <td class="text-center">
                                     <button class="btn-action btn-receipt" onclick="printReceipt(<?= $payment['payment_id'] ?>)"><i class="fa-solid fa-print"></i> Receipt</button>
                                 </td>
@@ -725,7 +727,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     if (guestSelect.value) { updateGuestInfo(); }
     
-    // Auto scroll to history if searching
     if(window.location.search.includes('filter_') || window.location.search.includes('search_')) {
         document.getElementById('history-section').scrollIntoView({ behavior: 'smooth' });
     }

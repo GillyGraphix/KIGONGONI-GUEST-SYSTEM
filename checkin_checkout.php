@@ -87,7 +87,9 @@ if (isset($_POST['action'])) {
             mysqli_query($conn, "DELETE FROM guest WHERE guest_id='$guest_id_safe'");
 
             // --- LOG ACTIVITY YA DELETE ---
-            $log_user     = mysqli_real_escape_string($conn, $_SESSION['username'] ?? 'Unknown');
+            // Tumia session variable yoyote inayopatikana
+            $raw_user     = $_SESSION['username'] ?? $_SESSION['fullname'] ?? $_SESSION['user_name'] ?? $_SESSION['name'] ?? 'Unknown';
+            $log_user     = mysqli_real_escape_string($conn, $raw_user);
             $log_role     = mysqli_real_escape_string($conn, $_SESSION['role'] ?? 'receptionist');
             $log_action   = "Delete Guest";
             $guest_name   = mysqli_real_escape_string($conn, $guest_info['full_name'] ?? 'Unknown');

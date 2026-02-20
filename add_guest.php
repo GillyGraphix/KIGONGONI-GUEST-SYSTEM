@@ -26,7 +26,7 @@ $car_available = $car_plate = '';
 $success = $error = '';
 $auto_checkin = false;
 $confirm_details = false;
-$booking_id_delete = 0; // Variable ya kubeba ID ya booking ili ifutwe baadae
+$booking_id_delete = 0; 
 
 // Variable mpya kwa ajili ya SweetAlert
 $swal_json = ''; 
@@ -113,20 +113,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $address_dummy = $company_address; 
                 $stmt->bind_param("sssssssssssssssssss", $first_name, $last_name, $phone, $email, $address_dummy, $city, $country, $company_name, $company_address, $r_name, $r_type, $r_rate, $checkin_date, $checkin_time, $checkout_date, $checkout_time, $car_available, $car_plate, $booking_type);
                 
-                if ($stmt->execute()) {
-                    $guest_id = $conn->insert_id;
-                    $checkin_datetime = "$checkin_date " . ($checkin_time ?: '00:00:00');
-                    $checkout_datetime = "$checkout_date " . ($checkout_time ?: '10:00:00');
-                    $diff = strtotime($checkout_datetime) - strtotime($checkin_datetime);
-                    $days = max(1, ceil($diff / (60*60*24)));
-                    $total = $r_rate * $days;
-                    $grand_total += $total;
+                try {
+                    if ($stmt->execute()) {
+                        $guest_id = $conn->insert_id;
+                        $checkin_datetime = "$checkin_date " . ($checkin_time ?: '00:00:00');
+                        $checkout_datetime = "$checkout_date " . ($checkout_time ?: '10:00:00');
+                        $diff = strtotime($checkout_datetime) - strtotime($checkin_datetime);
+                        $days = max(1, ceil($diff / (60*60*24)));
+                        $total = $r_rate * $days;
+                        $grand_total += $total;
 
-                    $c_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, 'Checked In')");
-                    $c_stmt->bind_param("isssid", $guest_id, $r_name, $r_type, $checkin_datetime, $days, $total);
-                    $c_stmt->execute();
-                    $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$r_name'");
-                    $count++;
+                        $c_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, 'Checked In')");
+                        $c_stmt->bind_param("isssid", $guest_id, $r_name, $r_type, $checkin_datetime, $days, $total);
+                        $c_stmt->execute();
+                        $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$r_name'");
+                        $count++;
+                    }
+                } catch (mysqli_sql_exception $e) {
+                    $error = "Database Error: " . $e->getMessage();
                 }
             }
             if ($count > 0) {
@@ -140,9 +144,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'redirect' => 'view_guests.php?mode=group'
                 ];
                 $swal_json = json_encode($swal_data);
-                
                 $first_name = $last_name = $company_name = '';
-            } else { $error = "Failed to book rooms. Please try again."; }
+            }
         }
     }
 
@@ -160,8 +163,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $country = $_POST['country'] ?? '';
         $passport_id = $_POST['passport_id'] ?? '';
         $passport_country = $_POST['passport_country'] ?? '';
-
-        // MAREKEBISHO HAPA: Badilisha string tupu kuwa NULL kwa ajili ya seva
         $passport_expiry = !empty($_POST['passport_expiry']) ? $_POST['passport_expiry'] : null;
 
         $company_name = $_POST['company_name'] ?? '';
@@ -196,48 +197,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $stmt->bind_param("sssssssssssssssssssssssss", $first_name,$last_name,$gender,$resident_status,$phone,$email,$address,$city,$country,$passport_id,$passport_country,$passport_expiry,$company_name,$company_address,$room_name,$room_type,$room_rate,$checkin_date,$checkin_time,$checkout_date,$checkout_time,$status,$car_available,$car_plate, $booking_type);
 
-            if ($stmt->execute()) {
-                $guest_id = $conn->insert_id;
-                $checkin_datetime = $checkin_date . ' ' . ($checkin_time ?: '00:00:00');
-                $checkout_datetime = $checkout_date . ' ' . ($checkout_time ?: '10:00:00');
-                $checkin_ts = strtotime($checkin_datetime);
-                $checkout_ts = strtotime($checkout_datetime);
-                
-                if ($checkout_ts <= $checkin_ts) {
-                    $error = "Check-out date and time must be after Check-in.";
-                } else {
-                    $days_stayed = ceil(($checkout_ts - $checkin_ts) / (60 * 60 * 24));
-                    if ($days_stayed < 1) $days_stayed = 1;
-                    $total_amount = floatval($room_rate) * $days_stayed;
+            // MAREKEBISHO YA DUPLICATE ENTRY HAPA
+            try {
+                if ($stmt->execute()) {
+                    $guest_id = $conn->insert_id;
+                    $checkin_datetime = $checkin_date . ' ' . ($checkin_time ?: '00:00:00');
+                    $checkout_datetime = $checkout_date . ' ' . ($checkout_time ?: '10:00:00');
+                    $checkin_ts = strtotime($checkin_datetime);
+                    $checkout_ts = strtotime($checkout_datetime);
                     
-                    $checkin_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                    if ($checkin_stmt) {
-                        $status_cc = 'Checked In';
-                        $checkin_stmt->bind_param("isssids", $guest_id, $room_name, $room_type, $checkin_datetime, $days_stayed, $total_amount, $status_cc);
-                        if ($checkin_stmt->execute()) {
-                            
-                            $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
-                            logActivity($conn, "Check-in", $log_msg);
+                    if ($checkout_ts <= $checkin_ts) {
+                        $error = "Check-out date and time must be after Check-in.";
+                    } else {
+                        $days_stayed = ceil(($checkout_ts - $checkin_ts) / (60 * 60 * 24));
+                        if ($days_stayed < 1) $days_stayed = 1;
+                        $total_amount = floatval($room_rate) * $days_stayed;
+                        
+                        $checkin_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                        if ($checkin_stmt) {
+                            $status_cc = 'Checked In';
+                            $checkin_stmt->bind_param("isssids", $guest_id, $room_name, $room_type, $checkin_datetime, $days_stayed, $total_amount, $status_cc);
+                            if ($checkin_stmt->execute()) {
+                                $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
+                                logActivity($conn, "Check-in", $log_msg);
 
-                            if ($booking_id_to_clear > 0) {
-                                $conn->query("DELETE FROM bookings WHERE id = $booking_id_to_clear");
+                                if ($booking_id_to_clear > 0) {
+                                    $conn->query("DELETE FROM bookings WHERE id = $booking_id_to_clear");
+                                }
+
+                                $swal_data = [
+                                    'icon' => 'success',
+                                    'title' => 'Guest Checked In!',
+                                    'html' => "Room Assigned: <strong>$room_name</strong><br>Total Bill: <strong>TZS " . number_format($total_amount) . "</strong>",
+                                    'redirect' => 'view_guests.php'
+                                ];
+                                $swal_json = json_encode($swal_data);
+                                $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$room_name'");
+                                $first_name = $last_name = $phone = ''; 
                             }
-
-                            $swal_data = [
-                                'icon' => 'success',
-                                'title' => 'Guest Checked In!',
-                                'html' => "Room Assigned: <strong>$room_name</strong><br>Total Bill: <strong>TZS " . number_format($total_amount) . "</strong>",
-                                'redirect' => 'view_guests.php'
-                            ];
-                            $swal_json = json_encode($swal_data);
-                            
-                            $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$room_name'");
-                            $first_name = $last_name = $phone = ''; 
-                        } else { $error = "Checkin record failed: " . $checkin_stmt->error; }
-                        $checkin_stmt->close();
+                            $checkin_stmt->close();
+                        }
                     }
                 }
-            } else { $error = "Error: " . $stmt->error; }
+            } catch (mysqli_sql_exception $e) {
+                if ($e->getCode() == 1062) {
+                    $error = "Kosa: Huyu mgeni tayari ameshasajiliwa kwenye chumba kingine au ana jina lilelile lenye mgongano (Duplicate Entry).";
+                } else {
+                    $error = "Tatizo la Database: " . $e->getMessage();
+                }
+            }
             $stmt->close();
         }
     }
@@ -254,11 +262,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-    /* COPY OF DASHBOARD STYLES */
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
     body { background: #f5f7fa; color: #2c3e50; min-height: 100vh; overflow-x: hidden; }
 
-    /* Sidebar Styling */
     .sidebar { position: fixed; left: 0; top: 0; width: 260px; height: 100vh; background: #1e3a5f; color: #fff; padding: 30px 0; display: flex; flex-direction: column; box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1); z-index: 1000; overflow-y: auto; transition: transform 0.3s ease-in-out; }
     .sidebar-header { padding: 0 25px 30px 25px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 20px; }
     .sidebar-header h2 { font-weight: 600; font-size: 1.2rem; color: #fff; margin-bottom: 5px; text-align: center; }
@@ -273,10 +279,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .logout-btn i { margin-right: 10px; }
     .logout-btn:hover { background: #c82333; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3); }
 
-    /* Main Content */
     .main-content { margin-left: 260px; padding: 35px 40px; min-height: 100vh; transition: margin-left 0.3s ease-in-out; }
 
-    /* Header & Mode Switcher */
     .header { margin-bottom: 35px; background: #fff; padding: 25px 30px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px; }
     .header-title { font-size: 1.6rem; font-weight: 700; color: #1e3a5f; display: flex; align-items: center; gap: 10px; }
     .menu-toggle { display: none; font-size: 1.5rem; color: #1e3a5f; cursor: pointer; }
@@ -286,7 +290,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .btn-mode:hover { background: #f8f9fa; transform: translateY(-2px); }
     .btn-mode.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-color: transparent; box-shadow: 0 4px 10px rgba(102, 126, 234, 0.3); }
 
-    /* Form Styles (Card Based) */
     .form-card { background: #fff; border-radius: 15px; padding: 30px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); margin-bottom: 25px; transition: all 0.3s ease; }
     .form-card:hover { box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); }
     .section-title { font-size: 1.1rem; font-weight: 700; color: #1e3a5f; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #f0f2f5; display: flex; align-items: center; gap: 10px; }
@@ -296,19 +299,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .form-label { font-weight: 600; margin-bottom: 8px; color: #2c3e50; font-size: 0.9rem; }
     .form-label .required { color: #dc3545; margin-left: 3px; }
     
-    /* REKEBISHO YA RANGI YA MAANDISHI HAPA */
     .form-control { 
         width: 100%; padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; 
         font-size: 0.95rem; transition: all 0.3s ease; background: #f8f9fa; 
-        color: #000 !important; /* Herufi nyeusi kabisa */
+        color: #000 !important; 
     }
     .form-control:focus { outline: none; border-color: #667eea; background: #fff; }
     
-    /* Inafanya maandishi ya select na readonly yaonekane vizuri */
     select.form-control { color: #1e3a5f !important; font-weight: 500; }
     .form-control:read-only { background: #e9ecef; color: #000 !important; font-weight: 600; }
     
-    /* Checkbox & Dropdown */
     .form-check { display: flex; align-items: center; gap: 10px; padding-top: 15px; }
     .form-check-input { width: 18px; height: 18px; accent-color: #667eea; cursor: pointer; }
     .form-check-label { font-weight: 500; color: #2c3e50; cursor: pointer; font-size: 0.95rem; }
@@ -320,7 +320,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .dropdown-item { padding: 10px 15px; border-bottom: 1px solid #f1f1f1; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #000; }
     .dropdown-item:hover { background: #f8f9fa; }
 
-    /* Action Buttons & Notices */
     .btn-submit { width: 100%; padding: 15px; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: #fff; border: none; border-radius: 10px; font-weight: 700; font-size: 1.1rem; cursor: pointer; transition: all 0.3s ease; margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; }
     .btn-submit:hover:not(:disabled) { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4); }
     .btn-submit:disabled { background: #ccc; cursor: not-allowed; }
@@ -330,7 +329,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     .calculation-bar { margin-top: 20px; padding: 15px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; color: #2e7d32; font-weight: 700; }
 
-    /* Car Inputs */
     .btn-add-car { background: #17a2b8; color: white; border: none; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; margin-top: 10px; }
     .btn-remove-car { background: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
     .car-input-group { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
@@ -338,10 +336,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .alert { padding: 15px; border-radius: 10px; margin-bottom: 20px; font-weight: 500; }
     .alert-danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
 
-    /* Mobile Overlay */
     .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 900; }
 
-    /* Responsive */
     @media (max-width: 768px) {
         .sidebar { transform: translateX(-100%); width: 250px; }
         .sidebar.active { transform: translateX(0); }
@@ -457,7 +453,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <label for="room_<?= $room['room_name'] ?>" style="cursor:pointer; width:100%; color: #000;">Room <?= htmlspecialchars($room['room_name']) ?> - <?= htmlspecialchars($room['room_type']) ?> <small style="color:#666;">(TZS <?= number_format($room['room_rate']) ?>)</small></label>
                             </div>
                             <?php endforeach; ?>
-                            <?php if(empty($available_rooms)): ?><div class="dropdown-item" style="color: #dc3545;">No rooms available.</div><?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -489,10 +484,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <h4 class="section-title"><i class="fa-solid fa-check-circle"></i> Confirmation</h4>
             <div class="checkin-notice"><i class="fa-solid fa-info-circle"></i><span>Please tick both boxes below to proceed.</span></div>
             <div class="form-row">
-                <div class="form-check"><input type="checkbox" name="auto_checkin" id="auto_checkin" class="form-check-input" value="1"><label class="form-check-label" for="auto_checkin"><strong>Auto Check-in</strong> (Add to Check-in List)</label></div>
-                <div class="form-check"><input type="checkbox" name="confirm_details" id="confirm_details" class="form-check-input" value="1"><label class="form-check-label" for="confirm_details">I confirm group details are correct</label></div>
+                <div class="form-check"><input type="checkbox" name="auto_checkin" id="auto_checkin_group" class="form-check-input" value="1"><label class="form-check-label" for="auto_checkin_group"><strong>Auto Check-in</strong> (Add to Check-in List)</label></div>
+                <div class="form-check"><input type="checkbox" name="confirm_details" id="confirm_details_group" class="form-check-input" value="1"><label class="form-check-label" for="confirm_details_group">I confirm group details are correct</label></div>
             </div>
-            <button type="submit" class="btn-submit" id="submitBtn" disabled><i class="fa-solid fa-check"></i> Process Group Check-In</button>
+            <button type="submit" class="btn-submit" id="submitBtnGroup" disabled><i class="fa-solid fa-check"></i> Process Group Check-In</button>
         </div>
     </form>
 
@@ -571,143 +566,130 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-clipboard-check"></i> Finalize Check-In</h4>
             <div class="checkin-notice"><i class="fa-solid fa-magic"></i><span>Check the box below to automatically check in this guest.</span></div>
-            <div class="form-check"><input type="checkbox" name="auto_checkin" class="form-check-input" id="auto_checkin" value="1" <?= $auto_checkin?'checked':'' ?>><label class="form-check-label" for="auto_checkin">Automatically check in this guest</label></div>
+            <div class="form-check"><input type="checkbox" name="auto_checkin" class="form-check-input" id="auto_checkin_single" value="1" <?= $auto_checkin?'checked':'' ?>><label class="form-check-label" for="auto_checkin_single">Automatically check in this guest</label></div>
             
             <div class="confirm-notice"><i class="fa-solid fa-exclamation-triangle"></i><span>Verification Required</span></div>
-            <div class="form-check"><input type="checkbox" name="confirm_details" class="form-check-input" id="confirm_details" value="1" <?= $confirm_details?'checked':'' ?>><label class="form-check-label" for="confirm_details">I confirm all guest details are accurate</label></div>
+            <div class="form-check"><input type="checkbox" name="confirm_details" class="form-check-input" id="confirm_details_single" value="1" <?= $confirm_details?'checked':'' ?>><label class="form-check-label" for="confirm_details_single">I confirm all guest details are accurate</label></div>
             
-            <button type="submit" class="btn-submit" id="submitBtn" disabled><i class="fa-solid fa-user-check"></i> Complete Check-In</button>
+            <button type="submit" class="btn-submit" id="submitBtnSingle" disabled><i class="fa-solid fa-user-check"></i> Complete Check-In</button>
         </div>
     </form>
     <?php endif; ?>
 </div>
 
 <script>
-// Sidebar Toggle
 function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('active');
-    document.querySelector('.sidebar-overlay').classList.toggle('active');
+    document.getElementById('sidebar').classList.toggle('active');
+    document.querySelector('.sidebar-overlay').classList.toggle('active');
 }
 
-// SweetAlert Handling
 <?php if(!empty($swal_json)): ?>
-    const swalData = <?= $swal_json ?>;
-    Swal.fire({
-        icon: swalData.icon,
-        title: swalData.title,
-        html: swalData.html,
-        confirmButtonText: 'OK',
-        confirmButtonColor: '#28a745',
-        allowOutsideClick: false
-    }).then((result) => {
-        if (result.isConfirmed) {
-            window.location.href = swalData.redirect;
-        }
-    });
+    const swalData = <?= $swal_json ?>;
+    Swal.fire({
+        icon: swalData.icon,
+        title: swalData.title,
+        html: swalData.html,
+        confirmButtonText: 'OK',
+        confirmButtonColor: '#28a745',
+        allowOutsideClick: false
+    }).then((result) => {
+        if (result.isConfirmed) {
+            window.location.href = swalData.redirect;
+        }
+    });
 <?php endif; ?>
 
-// Custom Dropdown Logic
 const trigger = document.getElementById('dropdownTrigger');
 const content = document.querySelector('.dropdown-content');
 const roomCheckboxes = document.querySelectorAll('.room-checkbox');
 const totalDisplay = document.getElementById('total_display');
 
 if (trigger) {
-    trigger.addEventListener('click', function(e) { 
-        content.classList.toggle('show'); 
-        e.stopPropagation(); 
-    });
-    
-    document.addEventListener('click', function(e) { 
-        if (!trigger.contains(e.target) && !content.contains(e.target)) { 
-            content.classList.remove('show'); 
-        } 
-    });
-    
-    function updateDropdown() {
-        let count = 0; let total = 0;
-        roomCheckboxes.forEach(box => { 
-            if (box.checked) { 
-                count++; 
-                total += parseFloat(box.getAttribute('data-rate')); 
-            } 
-        });
-        trigger.innerHTML = count > 0 ? count + " Rooms Selected <i class='fa-solid fa-chevron-down'></i>" : "Select Rooms... <i class='fa-solid fa-chevron-down'></i>";
-        if(count > 0) {
-            trigger.style.color = "#1e3a5f"; 
-            trigger.style.fontWeight = "bold"; 
-            trigger.style.borderColor = "#667eea";
-        } else {
-            trigger.style.color = "#2c3e50"; 
-            trigger.style.fontWeight = "normal";
-            trigger.style.borderColor = "#e9ecef";
-        }
-        if (totalDisplay) { totalDisplay.textContent = "TZS " + total.toLocaleString(); }
-    }
-    roomCheckboxes.forEach(box => { box.addEventListener('change', updateDropdown); });
+    trigger.addEventListener('click', function(e) { 
+        content.classList.toggle('show'); 
+        e.stopPropagation(); 
+    });
+    
+    document.addEventListener('click', function(e) { 
+        if (!trigger.contains(e.target) && !content.contains(e.target)) { 
+            content.classList.remove('show'); 
+        } 
+    });
+    
+    function updateDropdown() {
+        let count = 0; let total = 0;
+        roomCheckboxes.forEach(box => { 
+            if (box.checked) { 
+                count++; 
+                total += parseFloat(box.getAttribute('data-rate')); 
+            } 
+        });
+        trigger.innerHTML = count > 0 ? count + " Rooms Selected <i class='fa-solid fa-chevron-down'></i>" : "Select Rooms... <i class='fa-solid fa-chevron-down'></i>";
+        if (totalDisplay) { totalDisplay.textContent = "TZS " + total.toLocaleString(); }
+    }
+    roomCheckboxes.forEach(box => { box.addEventListener('change', updateDropdown); });
 }
 
-// Single Room Selection Logic
 if (document.getElementById('room_name')) {
-    document.getElementById('room_name').addEventListener('change', function() {
-        var selected = this.options[this.selectedIndex];
-        document.getElementById('room_type').value = selected.getAttribute('data-type') || '';
-        document.getElementById('room_rate').value = selected.getAttribute('data-rate') || '';
-    });
-    if(document.getElementById('room_name').value) {
-        var event = new Event('change');
-        document.getElementById('room_name').dispatchEvent(event);
-    }
+    document.getElementById('room_name').addEventListener('change', function() {
+        var selected = this.options[this.selectedIndex];
+        document.getElementById('room_type').value = selected.getAttribute('data-type') || '';
+        document.getElementById('room_rate').value = selected.getAttribute('data-rate') || '';
+    });
+    if(document.getElementById('room_name').value) {
+        var event = new Event('change');
+        document.getElementById('room_name').dispatchEvent(event);
+    }
 }
 
-// Car Section Toggle
 function toggleCarSection(checkboxId, containerId) {
-    const checkbox = document.getElementById(checkboxId);
-    const container = document.getElementById(containerId);
-    if(checkbox && container) {
-        checkbox.addEventListener('change', function() { container.style.display = this.checked ? 'block' : 'none'; });
-        container.style.display = checkbox.checked ? 'block' : 'none';
-    }
+    const checkbox = document.getElementById(checkboxId);
+    const container = document.getElementById(containerId);
+    if(checkbox && container) {
+        checkbox.addEventListener('change', function() { container.style.display = this.checked ? 'block' : 'none'; });
+        container.style.display = checkbox.checked ? 'block' : 'none';
+    }
 }
 toggleCarSection('group_car_available', 'group_car_container');
 toggleCarSection('single_car_available', 'single_car_container');
 
-// Add/Remove Car Inputs
 function addCarInput(containerId) {
-    const container = document.getElementById(containerId);
-    const div = document.createElement('div');
-    div.className = 'car-input-group';
-    div.innerHTML = `<input type="text" name="car_plates[]" class="form-control" placeholder="Car Plate Number"><button type="button" class="btn-remove-car" onclick="removeCarInput(this)"><i class="fa-solid fa-times"></i></button>`;
-    container.appendChild(div);
+    const container = document.getElementById(containerId);
+    const div = document.createElement('div');
+    div.className = 'car-input-group';
+    div.innerHTML = `<input type="text" name="car_plates[]" class="form-control" placeholder="Car Plate Number"><button type="button" class="btn-remove-car" onclick="removeCarInput(this)"><i class="fa-solid fa-times"></i></button>`;
+    container.appendChild(div);
 }
 function removeCarInput(button) { button.parentElement.remove(); }
 
-// Submit Button State
-const chkAuto = document.getElementById('auto_checkin');
-const chkConfirm = document.getElementById('confirm_details');
-const btn = document.getElementById('submitBtn');
-if (chkAuto && chkConfirm && btn) {
-    function toggleBtn() { btn.disabled = !(chkAuto.checked && chkConfirm.checked); }
-    chkAuto.addEventListener('change', toggleBtn);
-    chkConfirm.addEventListener('change', toggleBtn);
-    toggleBtn();
+function setupSubmitButton(autoId, confirmId, btnId) {
+    const chkAuto = document.getElementById(autoId);
+    const chkConfirm = document.getElementById(confirmId);
+    const btn = document.getElementById(btnId);
+    if (chkAuto && chkConfirm && btn) {
+        const toggleBtn = () => { btn.disabled = !(chkAuto.checked && chkConfirm.checked); };
+        chkAuto.addEventListener('change', toggleBtn);
+        chkConfirm.addEventListener('change', toggleBtn);
+        toggleBtn();
+    }
 }
+setupSubmitButton('auto_checkin_group', 'confirm_details_group', 'submitBtnGroup');
+setupSubmitButton('auto_checkin_single', 'confirm_details_single', 'submitBtnSingle');
 
-// Form Validation
 const forms = document.querySelectorAll('form');
 forms.forEach(form => {
-    form.addEventListener('submit', function(e) {
-        var checkout = form.querySelector('input[name="checkout_date"]');
-        if (checkout && !checkout.value) { 
-            e.preventDefault(); 
-            Swal.fire({
-                icon: 'warning',
-                title: 'Missing Information',
-                text: 'IMPORTANT: Check-out Date is required.'
-            });
-            checkout.focus(); 
-        }
-    });
+    form.addEventListener('submit', function(e) {
+        var checkout = form.querySelector('input[name="checkout_date"]');
+        if (checkout && !checkout.value) { 
+            e.preventDefault(); 
+            Swal.fire({
+                icon: 'warning',
+                title: 'Missing Information',
+                text: 'IMPORTANT: Check-out Date is required.'
+            });
+            checkout.focus(); 
+        }
+    });
 });
 </script>
 

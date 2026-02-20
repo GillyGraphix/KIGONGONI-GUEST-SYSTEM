@@ -15,8 +15,13 @@ $currentPage = basename($_SERVER['PHP_SELF']);
 // HANDLE AJAX REQUESTS
 // =======================
 if (isset($_POST['action'])) {
+    // Zima errors zote - haziruhusiwi kuchafua JSON response
+    error_reporting(0);
+    ini_set('display_errors', 0);
+    mysqli_report(MYSQLI_REPORT_OFF);
+
     ob_clean(); 
-    header('Content-Type: application/json'); 
+    header('Content-Type: application/json');
 
     $response = [];
     function safe_json_number($n) { return number_format(floatval($n), 0, '', ''); }
@@ -106,6 +111,8 @@ if (isset($_POST['action'])) {
         // STEP 4: Jibu AJAX
         $response = ['status' => 'success', 'message' => 'Record deleted.'];
     }
+    // Hakikisha output ni JSON safi kabisa - futa kitu chochote kilichotoka
+    ob_clean();
     echo json_encode($response);
     exit();
 }

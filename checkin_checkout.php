@@ -96,17 +96,9 @@ if (isset($_POST['action'])) {
         mysqli_query($conn, "DELETE FROM checkin_checkout WHERE guest_id='$guest_id_safe'");
         mysqli_query($conn, "DELETE FROM guest WHERE guest_id='$guest_id_safe'");
 
-        // STEP 3: Weka log kwenye activity_logs
-        $lu    = $_SESSION['username'] ?? 'Unknown';
-        $lr    = $_SESSION['role']     ?? 'receptionist';
-        $la    = 'Delete Guest';
-        $ld    = "Deleted guest: $gname | Room: $groom ($gtype) | Days: $gdays | Total Bill: TZS $gtotal";
-        $lstmt = mysqli_prepare($conn, "INSERT INTO activity_logs (username, role, action, description, timestamp) VALUES (?,?,?,?,NOW())");
-        if ($lstmt) {
-            mysqli_stmt_bind_param($lstmt, 'ssss', $lu, $lr, $la, $ld);
-            mysqli_stmt_execute($lstmt);
-            mysqli_stmt_close($lstmt);
-        }
+        // STEP 3: Weka log - tumia logActivity() kama login.php inavyofanya
+        $log_desc = "Deleted guest: $gname | Room: $groom ($gtype) | Days: $gdays | Total Bill: TZS $gtotal";
+        logActivity($conn, "Delete Guest", $log_desc);
 
         // STEP 4: Jibu AJAX
         $response = ['status' => 'success', 'message' => 'Record deleted.'];

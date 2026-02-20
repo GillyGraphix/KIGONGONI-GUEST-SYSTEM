@@ -87,19 +87,17 @@ if (isset($_POST['action'])) {
             mysqli_query($conn, "DELETE FROM guest WHERE guest_id='$guest_id_safe'");
 
             // --- LOG ACTIVITY YA DELETE ---
-            // Tumia session variable yoyote inayopatikana
-            $raw_user     = $_SESSION['username'] ?? $_SESSION['fullname'] ?? $_SESSION['user_name'] ?? $_SESSION['name'] ?? 'Unknown';
-            $log_user     = mysqli_real_escape_string($conn, $raw_user);
-            $log_role     = mysqli_real_escape_string($conn, $_SESSION['role'] ?? 'receptionist');
-            $log_action   = "Delete Guest";
-            $guest_name   = mysqli_real_escape_string($conn, $guest_info['full_name'] ?? 'Unknown');
+            $log_user      = mysqli_real_escape_string($conn, $_SESSION['username'] ?? 'Unknown');
+            $log_role      = mysqli_real_escape_string($conn, $_SESSION['role'] ?? 'receptionist');
+            $log_action    = "Delete Guest";
+            $guest_name    = mysqli_real_escape_string($conn, $guest_info['full_name'] ?? 'Unknown');
             $room_name_log = mysqli_real_escape_string($conn, $guest_info['room_name'] ?? 'Unknown');
             $room_type_log = mysqli_real_escape_string($conn, $guest_info['room_type'] ?? '');
-            $days_log     = intval($guest_info['days_stayed'] ?? 0);
-            $total_log    = number_format(floatval($guest_info['total_amount'] ?? 0), 0, '', '');
-            $log_desc     = "Deleted guest: $guest_name | Room: $room_name_log ($room_type_log) | Days: $days_log | Total Bill: TZS $total_log";
+            $days_log      = intval($guest_info['days_stayed'] ?? 0);
+            $total_log     = number_format(floatval($guest_info['total_amount'] ?? 0), 0, '', '');
+            $log_desc      = "Deleted guest: $guest_name | Room: $room_name_log ($room_type_log) | Days: $days_log | Total Bill: TZS $total_log";
 
-            mysqli_query($conn, "INSERT INTO activity_logs (username, role, action, description, timestamp) VALUES ('$log_user', '$log_role', '$log_action', '$log_desc', NOW())");
+            mysqli_query($conn, "INSERT INTO activity_logs (`username`, `role`, `action`, `description`, `timestamp`) VALUES ('$log_user', '$log_role', '$log_action', '$log_desc', NOW())");
             // --- MWISHO WA LOGGING ---
 
             $response = ['status' => 'success', 'message' => 'Record deleted.'];

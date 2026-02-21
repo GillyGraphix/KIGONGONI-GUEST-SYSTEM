@@ -483,8 +483,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div>
             <?= $error ?>
             <div class="alert-actions">
-                <a href="checkin_checkout.php" class="alert-btn alert-btn-checkout"><i class="fa-solid fa-door-open"></i> Nenda Check-in/out</a>
-                <a href="rooms.php" class="alert-btn alert-btn-rooms"><i class="fa-solid fa-bed"></i> Angalia Vyumba</a>
+                <a href="checkin_checkout.php" class=><i class=></i></a>
+                <a href="rooms.php" class=><i class=></i></a>
             </div>
         </div>
     </div>

@@ -210,6 +210,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = "First Name, Last Name, Room Name, Room Type and Check-in Date are required.";
         } elseif (empty($gender)) {
             $error = "Tafadhali chagua <strong>Jinsia (Gender)</strong> ya mgeni kabla ya kuendelea.";
+        } elseif (empty($resident_status)) {
+            $error = "Tafadhali chagua <strong>Resident Status</strong> ya mgeni kabla ya kuendelea.";
         } elseif (!$confirm_details) {
             $error = "You must confirm the guest details.";
         } elseif (!$auto_checkin) {
@@ -517,7 +519,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">First Name<span class="required">*</span></label><input type="text" name="first_name" class="form-control" value="<?= htmlspecialchars($first_name) ?>" required></div>
                 <div class="form-group"><label class="form-label">Last Name<span class="required">*</span></label><input type="text" name="last_name" class="form-control" value="<?= htmlspecialchars($last_name) ?>" required></div>
                 <div class="form-group"><label class="form-label">Gender <span class="required">*</span></label><select name="gender" class="form-control" required><option value="">Select Gender</option><option value="Male" <?= $gender==='Male'?'selected':'' ?>>Male</option><option value="Female" <?= $gender==='Female'?'selected':'' ?>>Female</option></select></div>
-                <div class="form-group"><label class="form-label">Resident Status</label><select name="resident_status" class="form-control"><option value="">Select Status</option><option value="Resident" <?= $resident_status==='Resident'?'selected':'' ?>>Resident</option><option value="Non-Resident" <?= $resident_status==='Non-Resident'?'selected':'' ?>>Non-Resident</option></select></div>
+                <div class="form-group"><label class="form-label">Resident Status <span class="required">*</span></label><select name="resident_status" class="form-control" required><option value="">Select Status</option><option value="Resident" <?= $resident_status==='Resident'?'selected':'' ?>>Resident</option><option value="Non-Resident" <?= $resident_status==='Non-Resident'?'selected':'' ?>>Non-Resident</option></select></div>
             </div>
         </div>
         <div class="form-card">

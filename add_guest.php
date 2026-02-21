@@ -66,16 +66,16 @@ while ($row = $room_result->fetch_assoc()) {
 $room_stmt->close();
 
 // ==============================================================
-// HELPER FUNCTION: Angalia chumba kama kiko busy TU
+// HELPER FUNCTION: Angalia rooms table kama chumba kiko busy
 // ==============================================================
 function checkDuplicate($conn, $room_name, $passport_id = '', $phone = '') {
-    // Angalia chumba kama kiko na mgeni aliyecheckin tayari
-    $r = $conn->prepare("SELECT guest_id FROM guest WHERE room_name = ? AND status = 'Checked-in' LIMIT 1");
+    // Angalia rooms table - ndiyo chanzo cha kweli cha status ya chumba
+    $r = $conn->prepare("SELECT status FROM rooms WHERE room_name = ? LIMIT 1");
     $r->bind_param("s", $room_name);
     $r->execute();
-    $exists = $r->get_result()->num_rows > 0;
+    $row = $r->get_result()->fetch_assoc();
     $r->close();
-    if ($exists) {
+    if ($row && $row['status'] === 'Occupied') {
         return "Chumba <strong>$room_name</strong> kina mgeni tayari ambaye bado hajatoka. Tafadhali mfanye checkout kwanza au chagua chumba kingine.";
     }
     return null; // Sawa, endelea
@@ -224,63 +224,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($dup_error) {
                 $error = $dup_error;
             } else {
-                $stmt = $conn->prepare("INSERT INTO guest (first_name,last_name,gender,resident_status,phone,email,address,city,country,passport_id,passport_country,passport_expiry,company_name,company_address,room_name,room_type,room_rate,checkin_date,checkin_time,checkout_date,checkout_time,status,car_available,car_plate,booking_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-
-                if (!$stmt) { die("Prepare failed: " . $conn->error); }
-
-                $stmt->bind_param("sssssssssssssssssssssssss", $first_name,$last_name,$gender,$resident_status,$phone,$email,$address,$city,$country,$passport_id,$passport_country,$passport_expiry,$company_name,$company_address,$room_name,$room_type,$room_rate,$checkin_date,$checkin_time,$checkout_date,$checkout_time,$status,$car_available,$car_plate,$booking_type);
-
+                // TUMIA TRANSACTION - kama kitu kimoja kinashindwa, vyote vinarudi nyuma
+                $conn->begin_transaction();
                 try {
-                    if ($stmt->execute()) {
-                        $guest_id = $conn->insert_id;
-                        $checkin_datetime = $checkin_date . ' ' . ($checkin_time ?: '00:00:00');
-                        $checkout_datetime = $checkout_date . ' ' . ($checkout_time ?: '10:00:00');
-                        $checkin_ts = strtotime($checkin_datetime);
-                        $checkout_ts = strtotime($checkout_datetime);
-                        
-                        if ($checkout_ts <= $checkin_ts) {
-                            $error = "Check-out date and time must be after Check-in.";
-                        } else {
-                            $days_stayed = ceil(($checkout_ts - $checkin_ts) / (60 * 60 * 24));
-                            if ($days_stayed < 1) $days_stayed = 1;
-                            $total_amount = floatval($room_rate) * $days_stayed;
-                            
-                            $checkin_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                            if ($checkin_stmt) {
-                                $status_cc = 'Checked In';
-                                $checkin_stmt->bind_param("isssids", $guest_id, $room_name, $room_type, $checkin_datetime, $days_stayed, $total_amount, $status_cc);
-                                if ($checkin_stmt->execute()) {
-                                    $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
-                                    logActivity($conn, "Check-in", $log_msg);
+                    // INSERT mgeni
+                    $stmt = $conn->prepare("INSERT INTO guest (first_name,last_name,gender,resident_status,phone,email,address,city,country,passport_id,passport_country,passport_expiry,company_name,company_address,room_name,room_type,room_rate,checkin_date,checkin_time,checkout_date,checkout_time,status,car_available,car_plate,booking_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+                    $stmt->bind_param("sssssssssssssssssssssssss", $first_name,$last_name,$gender,$resident_status,$phone,$email,$address,$city,$country,$passport_id,$passport_country,$passport_expiry,$company_name,$company_address,$room_name,$room_type,$room_rate,$checkin_date,$checkin_time,$checkout_date,$checkout_time,$status,$car_available,$car_plate,$booking_type);
+                    $stmt->execute();
+                    $guest_id = $conn->insert_id;
+                    $stmt->close();
 
-                                    if ($booking_id_to_clear > 0) {
-                                        $conn->query("DELETE FROM bookings WHERE id = $booking_id_to_clear");
-                                    }
+                    // Hesabu siku
+                    $checkin_datetime  = $checkin_date . ' ' . ($checkin_time ?: '00:00:00');
+                    $checkout_datetime = $checkout_date . ' ' . ($checkout_time ?: '10:00:00');
+                    $checkin_ts  = strtotime($checkin_datetime);
+                    $checkout_ts = strtotime($checkout_datetime);
 
-                                    $swal_data = [
-                                        'icon' => 'success',
-                                        'title' => 'Guest Checked In!',
-                                        'html' => "Room Assigned: <strong>$room_name</strong><br>Total Bill: <strong>TZS " . number_format($total_amount) . "</strong>",
-                                        'redirect' => 'view_guests.php'
-                                    ];
-                                    $swal_json = json_encode($swal_data);
-                                    $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$room_name'");
-                                    $first_name = $last_name = $phone = ''; 
-                                }
-                                $checkin_stmt->close();
-                            }
-                        }
+                    if ($checkout_ts <= $checkin_ts) {
+                        throw new Exception("Check-out date and time must be after Check-in.");
                     }
-                } catch (mysqli_sql_exception $e) {
-                    if ($e->getCode() == 1062) {
-                        // Duplicate entry - most likely the unique_guest index
-                        // Drop it: ALTER TABLE guest DROP INDEX unique_guest;
-                        $error = "Chumba <strong>$room_name</strong> kina mgeni tayari. Tafadhali mfanye checkout mgeni wa sasa, kisha ujaribu tena.";
+
+                    $days_stayed  = max(1, ceil(($checkout_ts - $checkin_ts) / (60 * 60 * 24)));
+                    $total_amount = floatval($room_rate) * $days_stayed;
+
+                    // INSERT checkin_checkout
+                    $status_cc    = 'Checked In';
+                    $checkin_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                    $checkin_stmt->bind_param("isssids", $guest_id, $room_name, $room_type, $checkin_datetime, $days_stayed, $total_amount, $status_cc);
+                    $checkin_stmt->execute();
+                    $checkin_stmt->close();
+
+                    // UPDATE room status
+                    $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$room_name'");
+
+                    // Kama booking - futa
+                    if ($booking_id_to_clear > 0) {
+                        $conn->query("DELETE FROM bookings WHERE id = $booking_id_to_clear");
+                    }
+
+                    // Kila kitu kimefanikiwa - commit
+                    $conn->commit();
+
+                    // Log na success message
+                    $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
+                    logActivity($conn, "Check-in", $log_msg);
+
+                    $swal_data = [
+                        'icon'     => 'success',
+                        'title'    => 'Guest Checked In!',
+                        'html'     => "Room Assigned: <strong>$room_name</strong><br>Total Bill: <strong>TZS " . number_format($total_amount) . "</strong>",
+                        'redirect' => 'view_guests.php'
+                    ];
+                    $swal_json = json_encode($swal_data);
+                    $first_name = $last_name = $phone = '';
+
+                } catch (Exception $e) {
+                    // Kitu kimeshindwa - rudisha nyuma kila kitu
+                    $conn->rollback();
+                    if (strpos($e->getMessage(), 'Check-out') !== false) {
+                        $error = $e->getMessage();
                     } else {
                         $error = "Tatizo la Database: " . $e->getMessage();
                     }
                 }
-                $stmt->close();
             }
         }
     }

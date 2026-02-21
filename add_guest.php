@@ -66,31 +66,19 @@ while ($row = $room_result->fetch_assoc()) {
 $room_stmt->close();
 
 // ==============================================================
-// HELPER FUNCTION: Angalia duplicate KABLA ya kuinsert
+// HELPER FUNCTION: Angalia chumba kama kiko busy TU
 // ==============================================================
-function checkDuplicate($conn, $room_name, $passport_id, $phone) {
-    // 1. Angalia chumba kama kiko na mgeni aliyecheckin tayari
+function checkDuplicate($conn, $room_name, $passport_id = '', $phone = '') {
+    // Angalia chumba kama kiko na mgeni aliyecheckin tayari
     $r = $conn->prepare("SELECT guest_id FROM guest WHERE room_name = ? AND status = 'Checked-in' LIMIT 1");
     $r->bind_param("s", $room_name);
     $r->execute();
-    if ($r->get_result()->num_rows > 0) {
-        return "Chumba <strong>$room_name</strong> kina mgeni tayari ambaye bado hajatoka. Tafadhali chagua chumba kingine au mfanye checkout mgeni wa sasa.";
-    }
+    $exists = $r->get_result()->num_rows > 0;
     $r->close();
-
-    // 2. Angalia passport/ID kama imetumika na mgeni mwingine aliyecheckin
-    if (!empty($passport_id)) {
-        $p = $conn->prepare("SELECT guest_id, CONCAT(first_name,' ',last_name) as name FROM guest WHERE passport_id = ? AND status = 'Checked-in' LIMIT 1");
-        $p->bind_param("s", $passport_id);
-        $p->execute();
-        $prow = $p->get_result()->fetch_assoc();
-        if ($prow) {
-            return "Passport/ID <strong>$passport_id</strong> tayari imesajiliwa na mgeni: <strong>{$prow['name']}</strong> ambaye bado yuko. Hakikisha hii si mgeni yuleyule.";
-        }
-        $p->close();
+    if ($exists) {
+        return "Chumba <strong>$room_name</strong> kina mgeni tayari ambaye bado hajatoka. Tafadhali mfanye checkout kwanza au chagua chumba kingine.";
     }
-
-    return null; // Hakuna duplicate
+    return null; // Sawa, endelea
 }
 
 // HANDLE FORM SUBMISSION
@@ -281,17 +269,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 } catch (mysqli_sql_exception $e) {
                     if ($e->getCode() == 1062) {
-                        // Gundua ni field gani ilisababisha duplicate
-                        $err_msg = $e->getMessage();
-                        if (stripos($err_msg, 'room_name') !== false) {
-                            $error = "Chumba <strong>$room_name</strong> kina mgeni tayari. Tafadhali mfanye checkout mgeni wa sasa kwenye ukurasa wa Check-in/Check-out, kisha ujaribu tena.";
-                        } elseif (stripos($err_msg, 'passport') !== false || stripos($err_msg, 'passport_id') !== false) {
-                            $error = "Namba ya Passport/ID <strong>$passport_id</strong> tayari ipo kwenye mfumo. Hakikisha hii si mgeni aliyesajiliwa tayari.";
-                        } elseif (stripos($err_msg, 'phone') !== false) {
-                            $error = "Namba ya simu <strong>$phone</strong> tayari ipo kwenye mfumo.";
-                        } else {
-                            $error = "Taarifa zimeshasajiliwa tayari (Duplicate Entry). Angalia: chumba, passport, au namba ya simu hayarudiwe.<br><small style='color:#666;'>DB Error: $err_msg</small>";
-                        }
+                        // Duplicate entry - most likely the unique_guest index
+                        // Drop it: ALTER TABLE guest DROP INDEX unique_guest;
+                        $error = "Chumba <strong>$room_name</strong> kina mgeni tayari. Tafadhali mfanye checkout mgeni wa sasa, kisha ujaribu tena.";
                     } else {
                         $error = "Tatizo la Database: " . $e->getMessage();
                     }

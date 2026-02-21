@@ -69,7 +69,6 @@ $room_stmt->close();
 // HELPER FUNCTION: Angalia rooms table kama chumba kiko busy
 // ==============================================================
 function checkDuplicate($conn, $room_name, $passport_id = '', $phone = '') {
-    // Angalia rooms table - ndiyo chanzo cha kweli cha status ya chumba
     $r = $conn->prepare("SELECT status FROM rooms WHERE room_name = ? LIMIT 1");
     $r->bind_param("s", $room_name);
     $r->execute();
@@ -78,7 +77,7 @@ function checkDuplicate($conn, $room_name, $passport_id = '', $phone = '') {
     if ($row && $row['status'] === 'Occupied') {
         return "Chumba <strong>$room_name</strong> kina mgeni tayari ambaye bado hajatoka. Tafadhali mfanye checkout kwanza au chagua chumba kingine.";
     }
-    return null; // Sawa, endelea
+    return null;
 }
 
 // HANDLE FORM SUBMISSION
@@ -120,7 +119,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $room_list_string = implode(", ", $selected_rooms);
 
             foreach ($selected_rooms as $r_name) {
-                // CHECK DUPLICATE KWA KILA CHUMBA
                 $dup_error = checkDuplicate($conn, $r_name, '', $phone);
                 if ($dup_error) {
                     $error = $dup_error;
@@ -130,34 +128,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $r_type = $room_details_map[$r_name]['type'];
                 $r_rate = $room_details_map[$r_name]['rate'];
                 
-                $stmt = $conn->prepare("INSERT INTO guest (first_name, last_name, phone, email, address, city, country, company_name, company_address, room_name, room_type, room_rate, checkin_date, checkin_time, checkout_date, checkout_time, status, car_available, car_plate, booking_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Checked-in', ?, ?, ?)");
-                $address_dummy = $company_address; 
-                $stmt->bind_param("sssssssssssssssssss", $first_name, $last_name, $phone, $email, $address_dummy, $city, $country, $company_name, $company_address, $r_name, $r_type, $r_rate, $checkin_date, $checkin_time, $checkout_date, $checkout_time, $car_available, $car_plate, $booking_type);
-                
+                $conn->begin_transaction();
                 try {
-                    if ($stmt->execute()) {
-                        $guest_id = $conn->insert_id;
-                        $checkin_datetime = "$checkin_date " . ($checkin_time ?: '00:00:00');
-                        $checkout_datetime = "$checkout_date " . ($checkout_time ?: '10:00:00');
-                        $diff = strtotime($checkout_datetime) - strtotime($checkin_datetime);
-                        $days = max(1, ceil($diff / (60*60*24)));
-                        $total = $r_rate * $days;
-                        $grand_total += $total;
+                    $stmt = $conn->prepare("INSERT INTO guest (first_name, last_name, phone, email, address, city, country, company_name, company_address, room_name, room_type, room_rate, checkin_date, checkin_time, checkout_date, checkout_time, status, car_available, car_plate, booking_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Checked-in', ?, ?, ?)");
+                    $address_dummy = $company_address; 
+                    $stmt->bind_param("sssssssssssssssssss", $first_name, $last_name, $phone, $email, $address_dummy, $city, $country, $company_name, $company_address, $r_name, $r_type, $r_rate, $checkin_date, $checkin_time, $checkout_date, $checkout_time, $car_available, $car_plate, $booking_type);
+                    $stmt->execute();
+                    $guest_id = $conn->insert_id;
+                    $stmt->close();
 
-                        $c_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, 'Checked In')");
-                        $c_stmt->bind_param("isssid", $guest_id, $r_name, $r_type, $checkin_datetime, $days, $total);
-                        $c_stmt->execute();
-                        $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$r_name'");
-                        $count++;
-                    }
-                } catch (mysqli_sql_exception $e) {
-                    if ($e->getCode() == 1062) {
-                        $error = "Chumba <strong>$r_name</strong> kina mgeni tayari (Duplicate Entry). Tafadhali mfanye checkout kwanza.";
-                    } else {
-                        $error = "Database Error: " . $e->getMessage();
-                    }
+                    $checkin_datetime = "$checkin_date " . ($checkin_time ?: '00:00:00');
+                    $checkout_datetime = "$checkout_date " . ($checkout_time ?: '10:00:00');
+                    $diff = strtotime($checkout_datetime) - strtotime($checkin_datetime);
+                    $days = max(1, ceil($diff / (60*60*24)));
+                    $total = $r_rate * $days;
+                    $grand_total += $total;
+
+                    $c_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, 'Checked In')");
+                    $c_stmt->bind_param("isssid", $guest_id, $r_name, $r_type, $checkin_datetime, $days, $total);
+                    $c_stmt->execute();
+                    $c_stmt->close();
+
+                    $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$r_name'");
+                    $conn->commit();
+                    $count++;
+                } catch (Exception $e) {
+                    $conn->rollback();
+                    $error = "Tatizo lilitokea wakati wa kusajili chumba <strong>$r_name</strong>. Tafadhali jaribu tena.";
+                    break;
                 }
             }
+
             if ($count > 0 && empty($error)) {
                 $log_msg = "Group Check-in: $company_name (Leader: $first_name $last_name). Rooms: $room_list_string. Total Bill: TZS " . number_format($grand_total);
                 logActivity($conn, "Check-in", $log_msg);
@@ -219,22 +220,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (empty($checkout_date)) {
             $error = "IMPORTANT: To use Auto Check-In, you MUST provide a Check-out Date.";
         } else {
-            // === CHECK DUPLICATE KABLA YA KUINSERT ===
             $dup_error = checkDuplicate($conn, $room_name, $passport_id, $phone);
             if ($dup_error) {
                 $error = $dup_error;
             } else {
-                // TUMIA TRANSACTION - kama kitu kimoja kinashindwa, vyote vinarudi nyuma
                 $conn->begin_transaction();
                 try {
-                    // INSERT mgeni
                     $stmt = $conn->prepare("INSERT INTO guest (first_name,last_name,gender,resident_status,phone,email,address,city,country,passport_id,passport_country,passport_expiry,company_name,company_address,room_name,room_type,room_rate,checkin_date,checkin_time,checkout_date,checkout_time,status,car_available,car_plate,booking_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
                     $stmt->bind_param("sssssssssssssssssssssssss", $first_name,$last_name,$gender,$resident_status,$phone,$email,$address,$city,$country,$passport_id,$passport_country,$passport_expiry,$company_name,$company_address,$room_name,$room_type,$room_rate,$checkin_date,$checkin_time,$checkout_date,$checkout_time,$status,$car_available,$car_plate,$booking_type);
                     $stmt->execute();
                     $guest_id = $conn->insert_id;
                     $stmt->close();
 
-                    // Hesabu siku
                     $checkin_datetime  = $checkin_date . ' ' . ($checkin_time ?: '00:00:00');
                     $checkout_datetime = $checkout_date . ' ' . ($checkout_time ?: '10:00:00');
                     $checkin_ts  = strtotime($checkin_datetime);
@@ -247,25 +244,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $days_stayed  = max(1, ceil(($checkout_ts - $checkin_ts) / (60 * 60 * 24)));
                     $total_amount = floatval($room_rate) * $days_stayed;
 
-                    // INSERT checkin_checkout
                     $status_cc    = 'Checked In';
                     $checkin_stmt = $conn->prepare("INSERT INTO checkin_checkout (guest_id, room_name, room_type, checkin_time, days_stayed, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
                     $checkin_stmt->bind_param("isssids", $guest_id, $room_name, $room_type, $checkin_datetime, $days_stayed, $total_amount, $status_cc);
                     $checkin_stmt->execute();
                     $checkin_stmt->close();
 
-                    // UPDATE room status
                     $conn->query("UPDATE rooms SET status='Occupied' WHERE room_name='$room_name'");
 
-                    // Kama booking - futa
                     if ($booking_id_to_clear > 0) {
                         $conn->query("DELETE FROM bookings WHERE id = $booking_id_to_clear");
                     }
 
-                    // Kila kitu kimefanikiwa - commit
                     $conn->commit();
 
-                    // Log na success message
                     $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
                     logActivity($conn, "Check-in", $log_msg);
 
@@ -279,12 +271,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $first_name = $last_name = $phone = '';
 
                 } catch (Exception $e) {
-                    // Kitu kimeshindwa - rudisha nyuma kila kitu
                     $conn->rollback();
                     if (strpos($e->getMessage(), 'Check-out') !== false) {
                         $error = $e->getMessage();
                     } else {
-                        $error = "Tatizo la Database: " . $e->getMessage();
+                        $error = "Tatizo lilitokea. Tafadhali hakikisha chumba kinapatikana na jaribu tena.";
                     }
                 }
             }
@@ -340,8 +331,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .form-label { font-weight: 600; margin-bottom: 8px; color: #2c3e50; font-size: 0.9rem; }
     .form-label .required { color: #dc3545; margin-left: 3px; }
     
-    .form-control { width: 100%; padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; font-size: 0.95rem; transition: all 0.3s ease; background: #f8f9fa; color: #000 !important; }
+    .form-control { 
+        width: 100%; padding: 12px 15px; border: 2px solid #e9ecef; border-radius: 10px; 
+        font-size: 0.95rem; transition: all 0.3s ease; background: #f8f9fa; 
+        color: #000 !important; 
+    }
     .form-control:focus { outline: none; border-color: #667eea; background: #fff; }
+    
     select.form-control { color: #1e3a5f !important; font-weight: 500; }
     .form-control:read-only { background: #e9ecef; color: #000 !important; font-weight: 600; }
     
@@ -369,7 +365,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .btn-remove-car { background: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
     .car-input-group { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
 
-    /* Error alert iliyoboreshwa */
     .alert { padding: 18px 20px; border-radius: 10px; margin-bottom: 20px; font-weight: 500; display: flex; align-items: flex-start; gap: 12px; }
     .alert-danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-left: 5px solid #dc3545; }
     .alert-danger .alert-icon { font-size: 1.4rem; flex-shrink: 0; margin-top: 2px; }
@@ -402,18 +397,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <h2>Receptionist Dashboard</h2>
         <p>Front Desk Management</p>
     </div>
+    
     <div class="sidebar-nav">
-        <a href="receptionist_dashboard.php" class="<?= $currentPage=='receptionist_dashboard.php'?'active':'' ?>"><i class="fa-solid fa-house"></i> <span>Dashboard</span></a>
-        <a href="add_guest.php" class="<?= $currentPage=='add_guest.php'?'active':'' ?>"><i class="fa-solid fa-user-plus"></i> <span>Add Guest</span></a>
-        <a href="view_guests.php" class="<?= $currentPage=='view_guests.php'?'active':'' ?>"><i class="fa-solid fa-users"></i> <span>View Guests</span></a>
-        <a href="rooms.php" class="<?= $currentPage=='rooms.php'?'active':'' ?>"><i class="fa-solid fa-bed"></i> <span>Rooms</span></a>
-        <a href="checkin_checkout.php" class="<?= $currentPage=='checkin_checkout.php'?'active':'' ?>"><i class="fa-solid fa-door-open"></i> <span>Check-in / Check-out</span></a>
-        <a href="payments.php" class="<?= $currentPage=='payments.php'?'active':'' ?>"><i class="fa-solid fa-credit-card"></i> <span>Payments</span></a>
-        <a href="bookings.php" class="<?= $currentPage=='bookings.php'?'active':'' ?>"><i class="fa-solid fa-calendar-check"></i> <span>Reservations</span></a>
+        <a href="receptionist_dashboard.php" class="<?= $currentPage=='receptionist_dashboard.php'?'active':'' ?>">
+            <i class="fa-solid fa-house"></i> <span>Dashboard</span>
+        </a>
+        <a href="add_guest.php" class="<?= $currentPage=='add_guest.php'?'active':'' ?>">
+            <i class="fa-solid fa-user-plus"></i> <span>Add Guest</span>
+        </a>
+        <a href="view_guests.php" class="<?= $currentPage=='view_guests.php'?'active':'' ?>">
+            <i class="fa-solid fa-users"></i> <span>View Guests</span>
+        </a>
+        <a href="rooms.php" class="<?= $currentPage=='rooms.php'?'active':'' ?>">
+            <i class="fa-solid fa-bed"></i> <span>Rooms </span>
+        </a>
+        <a href="checkin_checkout.php" class="<?= $currentPage=='checkin_checkout.php'?'active':'' ?>">
+            <i class="fa-solid fa-door-open"></i> <span>Check-in / Check-out</span>
+        </a>
+        <a href="payments.php" class="<?= $currentPage=='payments.php'?'active':'' ?>">
+            <i class="fa-solid fa-credit-card"></i> <span>Payments</span>
+        </a>
+        <a href="bookings.php" class="<?= $currentPage=='bookings.php'?'active':'' ?>">
+            <i class="fa-solid fa-calendar-check"></i> <span>Reservations</span>
+        </a>
     </div>
+    
     <div class="logout-section">
         <form action="logout.php" method="POST">
-            <button type="submit" class="logout-btn"><i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span></button>
+            <button type="submit" class="logout-btn">
+                <i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span>
+            </button>
         </form>
     </div>
 </div>
@@ -424,9 +437,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <i class="fa-solid fa-bars menu-toggle" onclick="toggleSidebar()"></i>
             <span><i class="fa-solid fa-user-plus"></i> Add New Guest</span>
         </div>
+        
         <div class="mode-switcher">
-            <a href="add_guest.php?mode=single" class="btn-mode <?= $mode == 'single' ? 'active' : '' ?>"><i class="fa-solid fa-user"></i> Individual</a>
-            <a href="add_guest.php?mode=group" class="btn-mode <?= $mode == 'group' ? 'active' : '' ?>"><i class="fa-solid fa-users"></i> Group / Company</a>
+            <a href="add_guest.php?mode=single" class="btn-mode <?= $mode == 'single' ? 'active' : '' ?>">
+                <i class="fa-solid fa-user"></i> Individual
+            </a>
+            <a href="add_guest.php?mode=group" class="btn-mode <?= $mode == 'group' ? 'active' : '' ?>">
+                <i class="fa-solid fa-users"></i> Group / Company
+            </a>
         </div>
     </div>
 
@@ -446,6 +464,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php if ($mode === 'group'): ?>
     <form method="POST" id="groupForm">
         <input type="hidden" name="form_mode" value="group">
+        
         <div class="form-card" style="border-top: 4px solid #667eea;">
             <h4 class="section-title"><i class="fa-solid fa-building"></i> Company / Group Details</h4>
             <div class="form-row">
@@ -457,6 +476,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">Country</label><input type="text" name="country" class="form-control" placeholder="Country"></div>
             </div>
         </div>
+        
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-user-tie"></i> Team Leader Info</h4>
             <div class="form-row">
@@ -466,6 +486,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">Email</label><input type="email" name="email" class="form-control"></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-bed"></i> Select Rooms</h4>
             <div class="form-row">
@@ -486,6 +507,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <div class="calculation-bar"><span><i class="fa-solid fa-calculator"></i> Total Value (Per Night):</span><span id="total_display" style="font-size: 1.2rem;">TZS 0</span></div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-calendar-alt"></i> Stay Duration</h4>
             <div class="form-row">
@@ -495,6 +517,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">Check-out Time</label><input type="time" name="checkout_time" class="form-control" value="10:00"></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-car"></i> Car Information</h4>
             <div class="form-check"><input type="checkbox" name="car_available" id="group_car_available" class="form-check-input" value="Yes"><label class="form-check-label" for="group_car_available">Guest has a car(s)</label></div>
@@ -504,11 +527,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <button type="button" class="btn-add-car" onclick="addCarInput('group_car_inputs')"><i class="fa-solid fa-plus"></i> Add Another Car</button>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-check-circle"></i> Confirmation</h4>
             <div class="checkin-notice"><i class="fa-solid fa-info-circle"></i><span>Please tick both boxes below to proceed.</span></div>
             <div class="form-row">
-                <div class="form-check"><input type="checkbox" name="auto_checkin" id="auto_checkin_group" class="form-check-input" value="1"><label class="form-check-label" for="auto_checkin_group"><strong>Auto Check-in</strong></label></div>
+                <div class="form-check"><input type="checkbox" name="auto_checkin" id="auto_checkin_group" class="form-check-input" value="1"><label class="form-check-label" for="auto_checkin_group"><strong>Auto Check-in</strong> (Add to Check-in List)</label></div>
                 <div class="form-check"><input type="checkbox" name="confirm_details" id="confirm_details_group" class="form-check-input" value="1"><label class="form-check-label" for="confirm_details_group">I confirm group details are correct</label></div>
             </div>
             <button type="submit" class="btn-submit" id="submitBtnGroup" disabled><i class="fa-solid fa-check"></i> Process Group Check-In</button>
@@ -519,6 +543,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <form method="POST" id="guestForm">
         <input type="hidden" name="form_mode" value="single">
         <input type="hidden" name="booking_id_delete" value="<?= $booking_id_delete ?>">
+        
         <div class="form-card" style="border-top: 4px solid #667eea;">
             <h4 class="section-title"><i class="fa-solid fa-user"></i> Guest Information</h4>
             <div class="form-row">
@@ -528,24 +553,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">Resident Status <span class="required">*</span></label><select name="resident_status" class="form-control" required><option value="">Select Status</option><option value="Resident" <?= $resident_status==='Resident'?'selected':'' ?>>Resident</option><option value="Non-Resident" <?= $resident_status==='Non-Resident'?'selected':'' ?>>Non-Resident</option></select></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-address-book"></i> Contact Details</h4>
             <div class="form-row">
-                <div class="form-group"><label class="form-label">Phone Number</label><input type="text" name="phone" class="form-control" value="<?= htmlspecialchars($phone) ?>"></div>
+                <div class="form-group"><label class="form-label">Phone Number</label><input type="text" name="phone" class="form-control" value="<?= htmlspecialchars($phone) ?>" placeholder="e.g. +255 712 345 678"></div>
                 <div class="form-group"><label class="form-label">Email Address</label><input type="email" name="email" class="form-control" value="<?= htmlspecialchars($email) ?>"></div>
                 <div class="form-group"><label class="form-label">Address</label><input type="text" name="address" class="form-control" value="<?= htmlspecialchars($address) ?>"></div>
                 <div class="form-group"><label class="form-label">City</label><input type="text" name="city" class="form-control" value="<?= htmlspecialchars($city) ?>"></div>
                 <div class="form-group"><label class="form-label">Country</label><input type="text" name="country" class="form-control" value="<?= htmlspecialchars($country) ?>"></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-passport"></i> Identification</h4>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">Passport / ID Number</label><input type="text" name="passport_id" class="form-control" value="<?= htmlspecialchars($passport_id) ?>"></div>
                 <div class="form-group"><label class="form-label">Issuing Country</label><input type="text" name="passport_country" class="form-control" value="<?= htmlspecialchars($passport_country) ?>"></div>
-                <div class="form-group"><label class="form-label">Expiration Date</label><input type="date" name="passport_expiry" class="form-control" value="<?= htmlspecialchars($passport_expiry) ?>"></div>
+                <div class="form-group"><label class="form-label">Expiration Date</label><input type="date" name="passport_expiry" class="form-control" value="<?= htmlspecialchars($passport_expiry ?? '') ?>"></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-briefcase"></i> Company (Optional)</h4>
             <div class="form-row">
@@ -553,6 +581,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">Company Address</label><input type="text" name="company_address" class="form-control" value="<?= htmlspecialchars($company_address) ?>"></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-bed"></i> Room Assignment</h4>
             <div class="form-row">
@@ -561,6 +590,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">Room Rate (TZS)</label><input type="number" name="room_rate" id="room_rate" class="form-control" value="<?= htmlspecialchars($room_rate) ?>" readonly></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-clock"></i> Check-in / Check-out</h4>
             <div class="form-row">
@@ -570,21 +600,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group"><label class="form-label">Check-out Time</label><input type="time" name="checkout_time" class="form-control" value="<?= htmlspecialchars($checkout_time) ?>"></div>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-car"></i> Car Details</h4>
             <div class="form-check"><input type="checkbox" name="car_available" id="single_car_available" class="form-check-input" value="Yes" <?= $car_available==='Yes'?'checked':'' ?>><label class="form-check-label" for="single_car_available">Guest has a car</label></div>
-            <div id="single_car_container" style="display: none; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 15px;">
+             <div id="single_car_container" style="display: none; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 15px;">
                 <label class="form-label">Car Plate Number</label>
                 <div id="single_car_inputs"><div class="car-input-group"><input type="text" name="car_plates[]" class="form-control" value="<?= htmlspecialchars($car_plate) ?>" placeholder="e.g. T 123 ABC"></div></div>
-                <button type="button" class="btn-add-car" onclick="addCarInput('single_car_inputs')"><i class="fa-solid fa-plus"></i> Add Another Car</button>
+                 <button type="button" class="btn-add-car" onclick="addCarInput('single_car_inputs')"><i class="fa-solid fa-plus"></i> Add Another Car</button>
             </div>
         </div>
+
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-clipboard-check"></i> Finalize Check-In</h4>
             <div class="checkin-notice"><i class="fa-solid fa-magic"></i><span>Check the box below to automatically check in this guest.</span></div>
             <div class="form-check"><input type="checkbox" name="auto_checkin" class="form-check-input" id="auto_checkin_single" value="1" <?= $auto_checkin?'checked':'' ?>><label class="form-check-label" for="auto_checkin_single">Automatically check in this guest</label></div>
+            
             <div class="confirm-notice"><i class="fa-solid fa-exclamation-triangle"></i><span>Verification Required</span></div>
             <div class="form-check"><input type="checkbox" name="confirm_details" class="form-check-input" id="confirm_details_single" value="1" <?= $confirm_details?'checked':'' ?>><label class="form-check-label" for="confirm_details_single">I confirm all guest details are accurate</label></div>
+            
             <button type="submit" class="btn-submit" id="submitBtnSingle" disabled><i class="fa-solid fa-user-check"></i> Complete Check-In</button>
         </div>
     </form>
@@ -670,13 +704,14 @@ setupSubmitButton('auto_checkin_single', 'confirm_details_single', 'submitBtnSin
 document.querySelectorAll('form').forEach(form => {
     form.addEventListener('submit', function(e) {
         var checkout = form.querySelector('input[name="checkout_date"]');
-        if (checkout && !checkout.value) {
-            e.preventDefault();
+        if (checkout && !checkout.value) { 
+            e.preventDefault(); 
             Swal.fire({ icon: 'warning', title: 'Missing Information', text: 'IMPORTANT: Check-out Date is required.' });
-            checkout.focus();
+            checkout.focus(); 
         }
     });
 });
 </script>
+
 </body>
 </html>

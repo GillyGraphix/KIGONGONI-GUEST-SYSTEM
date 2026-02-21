@@ -157,15 +157,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $count++;
                 } catch (Exception $e) {
                     $conn->rollback();
-                    // HAPA: Nimebadilisha ili ionyeshe ujumbe wa database moja kwa moja
-                    $error = "Tatizo la DB wakati wa kusajili chumba <strong>$r_name</strong>: " . $e->getMessage();
+                    $error_msg = $e->getMessage();
+                    
+                    // --- MTEGO WA KUITAFUTA UNIQUE_GUEST ---
+                    if (strpos($error_msg, 'unique_guest') !== false) {
+                        $res = $conn->query("SELECT DATABASE() as db");
+                        $current_db = $res->fetch_assoc()['db'];
+                        
+                        $idx_res = $conn->query("SELECT TABLE_NAME FROM information_schema.STATISTICS WHERE INDEX_NAME = 'unique_guest' AND TABLE_SCHEMA = '$current_db' LIMIT 1");
+                        $table_name = ($idx_res && $idx_res->num_rows > 0) ? $idx_res->fetch_assoc()['TABLE_NAME'] : 'Haionekani wazi (Labda ipo kwenye Triggers au mfumo hautambui vyema)';
+                        
+                        $error = "🔍 <strong>SIRI IMEFICHUKA!</strong><br> Code inatumia Database inayoitwa: <strong>$current_db</strong>.<br> Hiyo sheria inayosumbua ipo kwenye table ya: <strong>$table_name</strong>.<br> Meseji Halisi: $error_msg";
+                    } else {
+                        $error = "Tatizo la DB wakati wa kusajili chumba <strong>$r_name</strong>: " . $error_msg;
+                    }
                     break;
                 }
             }
 
             if ($count > 0 && empty($error)) {
                 $log_msg = "Group Check-in: $company_name (Leader: $first_name $last_name). Rooms: $room_list_string. Total Bill: TZS " . number_format($grand_total);
-                // logActivity($conn, "Check-in", $log_msg); // Hakikisha function hii ipo, nimei-comment kama haipo
+                // logActivity($conn, "Check-in", $log_msg);
 
                 $swal_data = [
                     'icon' => 'success',
@@ -263,7 +275,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $conn->commit();
 
                     $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
-                    // logActivity($conn, "Check-in", $log_msg); // Hakikisha function hii ipo
+                    // logActivity($conn, "Check-in", $log_msg);
 
                     $swal_data = [
                         'icon'     => 'success',
@@ -276,11 +288,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 } catch (Exception $e) {
                     $conn->rollback();
-                    if (strpos($e->getMessage(), 'Check-out') !== false) {
-                        $error = $e->getMessage();
+                    $error_msg = $e->getMessage();
+                    
+                    // --- MTEGO WA KUITAFUTA UNIQUE_GUEST ---
+                    if (strpos($error_msg, 'unique_guest') !== false) {
+                        $res = $conn->query("SELECT DATABASE() as db");
+                        $current_db = $res->fetch_assoc()['db'];
+                        
+                        $idx_res = $conn->query("SELECT TABLE_NAME FROM information_schema.STATISTICS WHERE INDEX_NAME = 'unique_guest' AND TABLE_SCHEMA = '$current_db' LIMIT 1");
+                        $table_name = ($idx_res && $idx_res->num_rows > 0) ? $idx_res->fetch_assoc()['TABLE_NAME'] : 'Haionekani wazi (Labda ipo kwenye Triggers au mfumo hautambui vyema)';
+                        
+                        $error = "🔍 <strong>SIRI IMEFICHUKA!</strong><br> Code inatumia Database inayoitwa: <strong>$current_db</strong>.<br> Hiyo sheria inayosumbua ipo kwenye table ya: <strong>$table_name</strong>.<br> Meseji Halisi: $error_msg";
                     } else {
-                        // HAPA: Nimebadilisha ili ionyeshe ujumbe wa database
-                        $error = "Kosa la Database (Tatizo la DB): " . $e->getMessage();
+                        if (strpos($error_msg, 'Check-out') !== false) {
+                            $error = $error_msg;
+                        } else {
+                            $error = "Kosa la Database (Tatizo la DB): " . $error_msg;
+                        }
                     }
                 }
             }

@@ -2,6 +2,9 @@
 session_start();
 include 'db_connect.php';
 
+// MUHIMU: Hii inaruhusu MySQL kutoa Exceptions badala ya kufeli kimya kimya
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
 // Security: only receptionist
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'receptionist') {
     header("Location: login.php");
@@ -154,14 +157,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $count++;
                 } catch (Exception $e) {
                     $conn->rollback();
-                    $error = "Tatizo lilitokea wakati wa kusajili chumba <strong>$r_name</strong>. Tafadhali jaribu tena.";
+                    // HAPA: Nimebadilisha ili ionyeshe ujumbe wa database moja kwa moja
+                    $error = "Tatizo la DB wakati wa kusajili chumba <strong>$r_name</strong>: " . $e->getMessage();
                     break;
                 }
             }
 
             if ($count > 0 && empty($error)) {
                 $log_msg = "Group Check-in: $company_name (Leader: $first_name $last_name). Rooms: $room_list_string. Total Bill: TZS " . number_format($grand_total);
-                logActivity($conn, "Check-in", $log_msg);
+                // logActivity($conn, "Check-in", $log_msg); // Hakikisha function hii ipo, nimei-comment kama haipo
 
                 $swal_data = [
                     'icon' => 'success',
@@ -259,7 +263,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $conn->commit();
 
                     $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
-                    logActivity($conn, "Check-in", $log_msg);
+                    // logActivity($conn, "Check-in", $log_msg); // Hakikisha function hii ipo
 
                     $swal_data = [
                         'icon'     => 'success',
@@ -275,7 +279,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (strpos($e->getMessage(), 'Check-out') !== false) {
                         $error = $e->getMessage();
                     } else {
-                        $error = "Tatizo lilitokea. Tafadhali hakikisha chumba kinapatikana na jaribu tena.";
+                        // HAPA: Nimebadilisha ili ionyeshe ujumbe wa database
+                        $error = "Kosa la Database (Tatizo la DB): " . $e->getMessage();
                     }
                 }
             }

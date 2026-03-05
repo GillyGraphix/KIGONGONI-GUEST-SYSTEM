@@ -219,12 +219,37 @@ if ($types) {
     .bulk-del-card { background: #fff5f5; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #feb2b2; display: flex; flex-wrap: wrap; align-items: center; gap: 15px; }
     .bulk-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
-    /* --- TABLE (Responsive) --- */
+    /* --- TABLE (Responsive & Scrollable) --- */
     .table-container { background: #fff; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-    .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    
+    .table-responsive { 
+        overflow-x: auto; 
+        overflow-y: auto; 
+        max-height: 550px; 
+        -webkit-overflow-scrolling: touch; 
+    }
+
+    /* Custom Scrollbar Styles */
+    .table-responsive::-webkit-scrollbar { width: 8px; height: 8px; }
+    .table-responsive::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+    .table-responsive::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+    .table-responsive::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
     table { width: 100%; border-collapse: collapse; min-width: 900px; }
     th, td { padding: 15px; text-align: left; border-bottom: 1px solid #edf2f7; white-space: nowrap; }
-    th { background-color: #f8fafc; color: #64748b; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }
+    
+    th { 
+        background-color: #f8fafc; 
+        color: #64748b; 
+        font-weight: 600; 
+        font-size: 0.85rem; 
+        text-transform: uppercase; 
+        position: sticky; 
+        top: 0; 
+        z-index: 10;
+        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1); /* Adds shadow below sticky header */
+    }
+    
     tbody tr:hover { background-color: #f8fafc; }
 
     /* Badges */
@@ -357,7 +382,6 @@ if ($types) {
             <div class="stat-icon icon-payment"><i class="fa-solid fa-credit-card"></i></div>
             <div class="stat-content"><h4>Payments</h4><p><?= number_format($stats['payment_count'] ?? 0) ?></p></div>
         </div>
-        <!-- NEW: Delete Actions stat card -->
         <div class="stat-card">
             <div class="stat-icon icon-delete"><i class="fa-solid fa-trash-can"></i></div>
             <div class="stat-content"><h4>Delete Actions</h4><p><?= number_format($stats['delete_count'] ?? 0) ?></p></div>
@@ -385,7 +409,6 @@ if ($types) {
                     <option value="check-in" <?= $filter_action == 'check-in' ? 'selected' : '' ?>>Check-in</option>
                     <option value="check-out" <?= $filter_action == 'check-out' ? 'selected' : '' ?>>Check-out</option>
                     <option value="payment" <?= $filter_action == 'payment' ? 'selected' : '' ?>>Payment</option>
-                    <!-- NEW: Delete filter option -->
                     <option value="delete" <?= $filter_action == 'delete' ? 'selected' : '' ?>>Delete Actions</option>
                 </select>
             </div>

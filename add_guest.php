@@ -54,7 +54,8 @@ if (isset($_GET['booking_id'])) {
 // Fetch available rooms
 $available_rooms = [];
 $room_details_map = []; 
-$sql_rooms = "SELECT room_name, room_type, room_rate FROM rooms WHERE status='Available'";
+// NEW: Vuta na room_rate_usd
+$sql_rooms = "SELECT room_name, room_type, room_rate, room_rate_usd FROM rooms WHERE status='Available'";
 if (!empty($room_name)) {
     $safe_room = mysqli_real_escape_string($conn, $room_name);
     $sql_rooms .= " OR room_name = '$safe_room'";
@@ -64,7 +65,11 @@ $room_stmt->execute();
 $room_result = $room_stmt->get_result();
 while ($row = $room_result->fetch_assoc()) {
     $available_rooms[] = $row;
-    $room_details_map[$row['room_name']] = ['type' => $row['room_type'], 'rate' => $row['room_rate']];
+    $room_details_map[$row['room_name']] = [
+        'type' => $row['room_type'], 
+        'rate_local' => $row['room_rate'],
+        'rate_usd' => isset($row['room_rate_usd']) ? $row['room_rate_usd'] : 0
+    ];
 }
 $room_stmt->close();
 
@@ -87,6 +92,10 @@ function checkDuplicate($conn, $room_name, $passport_id = '', $phone = '') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $form_mode = $_POST['form_mode'] ?? 'single';
     $booking_id_to_clear = isset($_POST['booking_id_delete']) ? intval($_POST['booking_id_delete']) : 0;
+    
+    // NEW: Tunasoma aina ya mgeni na Exchange Rate kutoka kwa form
+    $guest_type = $_POST['guest_type'] ?? 'local';
+    $exchange_rate = floatval($_POST['exchange_rate'] ?? 2500);
 
     // --- A. GROUP CHECK-IN ---
     if ($form_mode === 'group') {
@@ -129,7 +138,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $r_type = $room_details_map[$r_name]['type'];
-                $r_rate = $room_details_map[$r_name]['rate'];
+                
+                // NEW: Security Calculate TZS kwa Group. Hata kama ni International, tunasave TZS pekee!
+                if ($guest_type === 'international') {
+                    $r_rate = $room_details_map[$r_name]['rate_usd'] * $exchange_rate;
+                } else {
+                    $r_rate = $room_details_map[$r_name]['rate_local'];
+                }
                 
                 $conn->begin_transaction();
                 try {
@@ -159,7 +174,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $conn->rollback();
                     $error_msg = $e->getMessage();
                     
-                    // --- MTEGO WA KUITAFUTA UNIQUE_GUEST ---
                     if (strpos($error_msg, 'unique_guest') !== false) {
                         $res = $conn->query("SELECT DATABASE() as db");
                         $current_db = $res->fetch_assoc()['db'];
@@ -176,13 +190,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($count > 0 && empty($error)) {
-                $log_msg = "Group Check-in: $company_name (Leader: $first_name $last_name). Rooms: $room_list_string. Total Bill: TZS " . number_format($grand_total);
+                // Return TZS message for Logs/Alerts
+                $log_msg = "Group Check-in: $company_name (Leader: $first_name $last_name). Rooms: $room_list_string. Total Bill: TZS " . number_format($grand_total, 2);
+                
+                // UNCOMMENTED: Log the group check-in activity
                 // logActivity($conn, "Check-in", $log_msg);
 
                 $swal_data = [
                     'icon' => 'success',
                     'title' => 'Group Added Successfully!',
-                    'html' => "<strong>$count Rooms Booked</strong><br>Total Amount: <strong>TZS " . number_format($grand_total) . "</strong>",
+                    'html' => "<strong>$count Rooms Booked</strong><br>Total Amount: <strong>TZS " . number_format($grand_total, 2) . "</strong>",
                     'redirect' => 'view_guests.php?mode=group'
                 ];
                 $swal_json = json_encode($swal_data);
@@ -210,7 +227,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $company_address = $_POST['company_address'] ?? '';
         $room_name = $_POST['room_name'] ?? '';
         $room_type = $_POST['room_type'] ?? '';
-        $room_rate = $_POST['room_rate'] ?? '';
+        
+        // NEW: Usalama Backend - tunakokotoa TZS pekee kutokea Backend hata kama JS ilituma value
+        if (!empty($room_name) && isset($room_details_map[$room_name])) {
+            if ($guest_type === 'international') {
+                $room_rate = $room_details_map[$room_name]['rate_usd'] * $exchange_rate;
+            } else {
+                $room_rate = $room_details_map[$room_name]['rate_local'];
+            }
+        } else {
+            $room_rate = $_POST['room_rate'] ?? '';
+        }
+
         $checkin_date = $_POST['checkin_date'] ?? '';
         $checkin_time = $_POST['checkin_time'] ?? '';
         $checkout_date = $_POST['checkout_date'] ?? '';
@@ -274,13 +302,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     $conn->commit();
 
-                    $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount);
+                    $log_msg = "Guest Check-in: $first_name $last_name into Room: $room_name. Bill: TZS " . number_format($total_amount, 2);
+                    
+                    // UNCOMMENTED: Log the single guest check-in activity
                     // logActivity($conn, "Check-in", $log_msg);
 
                     $swal_data = [
                         'icon'     => 'success',
                         'title'    => 'Guest Checked In!',
-                        'html'     => "Room Assigned: <strong>$room_name</strong><br>Total Bill: <strong>TZS " . number_format($total_amount) . "</strong>",
+                        'html'     => "Room Assigned: <strong>$room_name</strong><br>Total Bill: <strong>TZS " . number_format($total_amount, 2) . "</strong>",
                         'redirect' => 'view_guests.php'
                     ];
                     $swal_json = json_encode($swal_data);
@@ -290,7 +320,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $conn->rollback();
                     $error_msg = $e->getMessage();
                     
-                    // --- MTEGO WA KUITAFUTA UNIQUE_GUEST ---
                     if (strpos($error_msg, 'unique_guest') !== false) {
                         $res = $conn->query("SELECT DATABASE() as db");
                         $current_db = $res->fetch_assoc()['db'];
@@ -404,6 +433,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 900; }
 
+    /* NEW: Styles for the Guest Type Buttons */
+    .guest-type-selector { display: flex; background: #e9ecef; border-radius: 8px; overflow: hidden; margin-left: auto; }
+    .guest-type-btn { padding: 6px 15px; border: none; background: transparent; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: 0.3s; color: #6c757d; }
+    .guest-type-btn.active { background: #1e3a5f; color: #fff; }
+
     @media (max-width: 768px) {
         .sidebar { transform: translateX(-100%); width: 250px; }
         .sidebar.active { transform: translateX(0); }
@@ -414,6 +448,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .mode-switcher { width: 100%; }
         .btn-mode { flex: 1; justify-content: center; }
         .form-row { grid-template-columns: 1fr; }
+        .guest-type-selector { margin-left: 0; width: 100%; margin-top: 10px; }
+        .guest-type-btn { flex: 1; }
     }
 </style>
 </head>
@@ -493,9 +529,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php if ($mode === 'group'): ?>
     <form method="POST" id="groupForm">
         <input type="hidden" name="form_mode" value="group">
+        <input type="hidden" name="guest_type" id="group_guest_type_input" value="local"> 
         
         <div class="form-card" style="border-top: 4px solid #667eea;">
-            <h4 class="section-title"><i class="fa-solid fa-building"></i> Company / Group Details</h4>
+            <div class="section-title">
+                <span><i class="fa-solid fa-building"></i> Company / Group Details</span>
+                <span class="guest-type-selector">
+                    <button type="button" class="guest-type-btn active" onclick="setGroupGuestType('local', this)">Local</button>
+                    <button type="button" class="guest-type-btn" onclick="setGroupGuestType('international', this)">International</button>
+                </span>
+            </div>
+            
             <div class="form-row">
                 <div class="form-group"><label class="form-label">Company Name / Group Name <span class="required">*</span></label><input type="text" name="company_name" class="form-control" placeholder="e.g. Vodacom Team" required></div>
                 <div class="form-group"><label class="form-label">Company Address</label><input type="text" name="company_address" class="form-control" placeholder="Location"></div>
@@ -518,6 +562,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-bed"></i> Select Rooms</h4>
+            
+            <div class="form-row" id="group_exchange_rate_container" style="display: none; margin-bottom: 20px;">
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label" style="color: #0c63e4;">Exchange Rate ya Leo (1 USD = TZS) <span class="required">*</span></label>
+                    <input type="number" step="0.01" name="exchange_rate" id="group_exchange_rate" class="form-control" value="2500" oninput="updateDropdown()" style="border-color: #0c63e4;">
+                </div>
+            </div>
+
             <div class="form-row">
                 <div class="form-group" style="grid-column: 1 / -1;">
                     <label class="form-label">Select Multiple Rooms<span class="required">*</span></label>
@@ -526,8 +578,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="dropdown-content">
                             <?php foreach($available_rooms as $room): ?>
                             <div class="dropdown-item">
-                                <input type="checkbox" name="selected_rooms[]" id="room_<?= $room['room_name'] ?>" value="<?= htmlspecialchars($room['room_name']) ?>" data-rate="<?= $room['room_rate'] ?>" class="room-checkbox" style="width:18px; height:18px;">
-                                <label for="room_<?= $room['room_name'] ?>" style="cursor:pointer; width:100%; color: #000;">Room <?= htmlspecialchars($room['room_name']) ?> - <?= htmlspecialchars($room['room_type']) ?> <small style="color:#666;">(TZS <?= number_format($room['room_rate']) ?>)</small></label>
+                                <input type="checkbox" name="selected_rooms[]" id="room_<?= $room['room_name'] ?>" 
+                                       value="<?= htmlspecialchars($room['room_name']) ?>" 
+                                       data-rate-local="<?= $room['room_rate'] ?>" 
+                                       data-rate-usd="<?= $room['room_rate_usd'] ?>" 
+                                       class="room-checkbox" style="width:18px; height:18px;">
+                                <label for="room_<?= $room['room_name'] ?>" style="cursor:pointer; width:100%; color: #000;">
+                                    Room <?= htmlspecialchars($room['room_name']) ?> - <?= htmlspecialchars($room['room_type']) ?> 
+                                    <small class="room-price-display" style="color:#666;">(TZS <?= number_format($room['room_rate']) ?>)</small>
+                                </label>
                             </div>
                             <?php endforeach; ?>
                         </div>
@@ -572,9 +631,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <form method="POST" id="guestForm">
         <input type="hidden" name="form_mode" value="single">
         <input type="hidden" name="booking_id_delete" value="<?= $booking_id_delete ?>">
+        <input type="hidden" name="guest_type" id="single_guest_type_input" value="local"> 
         
         <div class="form-card" style="border-top: 4px solid #667eea;">
-            <h4 class="section-title"><i class="fa-solid fa-user"></i> Guest Information</h4>
+            <div class="section-title">
+                <span><i class="fa-solid fa-user"></i> Guest Information</span>
+                <span class="guest-type-selector">
+                    <button type="button" class="guest-type-btn active" onclick="setSingleGuestType('local', this)">Local</button>
+                    <button type="button" class="guest-type-btn" onclick="setSingleGuestType('international', this)">International</button>
+                </span>
+            </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">First Name<span class="required">*</span></label><input type="text" name="first_name" class="form-control" value="<?= htmlspecialchars($first_name) ?>" required></div>
                 <div class="form-group"><label class="form-label">Last Name<span class="required">*</span></label><input type="text" name="last_name" class="form-control" value="<?= htmlspecialchars($last_name) ?>" required></div>
@@ -613,10 +679,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         <div class="form-card">
             <h4 class="section-title"><i class="fa-solid fa-bed"></i> Room Assignment</h4>
+            
+            <div class="form-row" id="single_exchange_rate_container" style="display: none; margin-bottom: 20px;">
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label" style="color: #0c63e4;">Exchange Rate ya Leo (1 USD = TZS) <span class="required">*</span></label>
+                    <input type="number" step="0.01" name="exchange_rate" id="single_exchange_rate" class="form-control" value="2500" oninput="calculateSingleRate()" style="border-color: #0c63e4;">
+                </div>
+            </div>
+
             <div class="form-row">
-                <div class="form-group"><label class="form-label">Room Name<span class="required">*</span></label><select name="room_name" id="room_name" class="form-control" required><option value="">Select Room</option><?php foreach($available_rooms as $room): ?><option value="<?= htmlspecialchars($room['room_name']) ?>" data-type="<?= htmlspecialchars($room['room_type']) ?>" data-rate="<?= htmlspecialchars($room['room_rate']) ?>" <?= $room_name===$room['room_name']?'selected':'' ?>><?= htmlspecialchars($room['room_name']) ?></option><?php endforeach; ?></select></div>
+                <div class="form-group"><label class="form-label">Room Name<span class="required">*</span></label>
+                    <select name="room_name" id="room_name" class="form-control" required>
+                        <option value="">Select Room</option>
+                        <?php foreach($available_rooms as $room): ?>
+                            <option value="<?= htmlspecialchars($room['room_name']) ?>" 
+                                    data-type="<?= htmlspecialchars($room['room_type']) ?>" 
+                                    data-rate-local="<?= htmlspecialchars($room['room_rate']) ?>"
+                                    data-rate-usd="<?= htmlspecialchars($room['room_rate_usd']) ?>"
+                                    <?= $room_name===$room['room_name']?'selected':'' ?>>
+                                <?= htmlspecialchars($room['room_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
                 <div class="form-group"><label class="form-label">Room Type</label><input type="text" name="room_type" id="room_type" class="form-control" value="<?= htmlspecialchars($room_type) ?>" readonly></div>
-                <div class="form-group"><label class="form-label">Room Rate (TZS)</label><input type="number" name="room_rate" id="room_rate" class="form-control" value="<?= htmlspecialchars($room_rate) ?>" readonly></div>
+                
+                <div class="form-group">
+                    <label class="form-label">Room Rate (TZS)</label>
+                    <input type="number" step="0.01" name="room_rate" id="room_rate" class="form-control" value="<?= htmlspecialchars($room_rate) ?>" readonly>
+                </div>
             </div>
         </div>
 
@@ -655,6 +746,122 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </div>
 
 <script>
+// ==========================================
+// NEW: AUTO CONVERSION LOGIC (SINGLE GUEST)
+// ==========================================
+let currentSingleType = 'local';
+
+function calculateSingleRate() {
+    var roomSelect = document.getElementById('room_name');
+    if(!roomSelect || roomSelect.selectedIndex === 0) {
+        document.getElementById('room_type').value = '';
+        document.getElementById('room_rate').value = '';
+        return;
+    }
+    
+    var selected = roomSelect.options[roomSelect.selectedIndex];
+    document.getElementById('room_type').value = selected.getAttribute('data-type') || '';
+    
+    if (currentSingleType === 'international') {
+        var usdRate = parseFloat(selected.getAttribute('data-rate-usd')) || 0;
+        var exRate = parseFloat(document.getElementById('single_exchange_rate').value) || 0;
+        // Auto convert USD to TZS
+        document.getElementById('room_rate').value = (usdRate * exRate).toFixed(2);
+    } else {
+        document.getElementById('room_rate').value = selected.getAttribute('data-rate-local') || 0;
+    }
+}
+
+function setSingleGuestType(type, btnElement) {
+    currentSingleType = type;
+    document.getElementById('single_guest_type_input').value = type;
+    
+    const buttons = btnElement.parentElement.querySelectorAll('.guest-type-btn');
+    buttons.forEach(b => b.classList.remove('active'));
+    btnElement.classList.add('active');
+
+    const exContainer = document.getElementById('single_exchange_rate_container');
+    if (type === 'international') {
+        exContainer.style.display = 'block';
+    } else {
+        exContainer.style.display = 'none';
+    }
+    
+    calculateSingleRate();
+}
+
+if (document.getElementById('room_name')) {
+    document.getElementById('room_name').addEventListener('change', calculateSingleRate);
+    if(document.getElementById('room_name').value) {
+        document.getElementById('room_name').dispatchEvent(new Event('change'));
+    }
+}
+
+
+// ==========================================
+// NEW: AUTO CONVERSION LOGIC (GROUP GUESTS)
+// ==========================================
+let currentGroupType = 'local';
+function setGroupGuestType(type, btnElement) {
+    currentGroupType = type;
+    document.getElementById('group_guest_type_input').value = type;
+    
+    const buttons = btnElement.parentElement.querySelectorAll('.guest-type-btn');
+    buttons.forEach(b => b.classList.remove('active'));
+    btnElement.classList.add('active');
+
+    const exContainer = document.getElementById('group_exchange_rate_container');
+    if (type === 'international') {
+        exContainer.style.display = 'block';
+    } else {
+        exContainer.style.display = 'none';
+    }
+
+    if(typeof updateDropdown === 'function') {
+        updateDropdown();
+    }
+}
+
+const trigger = document.getElementById('dropdownTrigger');
+const content = document.querySelector('.dropdown-content');
+const roomCheckboxes = document.querySelectorAll('.room-checkbox');
+const totalDisplay = document.getElementById('total_display');
+
+if (trigger) {
+    trigger.addEventListener('click', function(e) { content.classList.toggle('show'); e.stopPropagation(); });
+    document.addEventListener('click', function(e) { if (!trigger.contains(e.target) && !content.contains(e.target)) { content.classList.remove('show'); } });
+    
+    function updateDropdown() {
+        let count = 0; let total = 0;
+        let exRate = parseFloat(document.getElementById('group_exchange_rate').value) || 0;
+        
+        roomCheckboxes.forEach(box => { 
+            let localRate = parseFloat(box.getAttribute('data-rate-local')) || 0;
+            let usdRate = parseFloat(box.getAttribute('data-rate-usd')) || 0;
+            let label = box.nextElementSibling.querySelector('.room-price-display');
+            
+            if (currentGroupType === 'international') {
+                let converted = usdRate * exRate;
+                label.innerText = `(USD $${usdRate} = TZS ${converted.toLocaleString()})`;
+                if (box.checked) { count++; total += converted; }
+            } else {
+                label.innerText = `(TZS ${localRate.toLocaleString()})`;
+                if (box.checked) { count++; total += localRate; }
+            }
+        });
+        
+        trigger.innerHTML = count > 0 ? count + " Rooms Selected <i class='fa-solid fa-chevron-down'></i>" : "Select Rooms... <i class='fa-solid fa-chevron-down'></i>";
+        if (totalDisplay) { 
+            totalDisplay.textContent = "TZS " + total.toLocaleString(); 
+        }
+    }
+    
+    roomCheckboxes.forEach(box => { box.addEventListener('change', updateDropdown); });
+}
+
+// ==========================================
+// ORIGINAL JS LOGIC 
+// ==========================================
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('active');
     document.querySelector('.sidebar-overlay').classList.toggle('active');
@@ -667,34 +874,6 @@ function toggleSidebar() {
         confirmButtonText: 'OK', confirmButtonColor: '#28a745', allowOutsideClick: false
     }).then((result) => { if (result.isConfirmed) { window.location.href = swalData.redirect; } });
 <?php endif; ?>
-
-const trigger = document.getElementById('dropdownTrigger');
-const content = document.querySelector('.dropdown-content');
-const roomCheckboxes = document.querySelectorAll('.room-checkbox');
-const totalDisplay = document.getElementById('total_display');
-
-if (trigger) {
-    trigger.addEventListener('click', function(e) { content.classList.toggle('show'); e.stopPropagation(); });
-    document.addEventListener('click', function(e) { if (!trigger.contains(e.target) && !content.contains(e.target)) { content.classList.remove('show'); } });
-    function updateDropdown() {
-        let count = 0; let total = 0;
-        roomCheckboxes.forEach(box => { if (box.checked) { count++; total += parseFloat(box.getAttribute('data-rate')); } });
-        trigger.innerHTML = count > 0 ? count + " Rooms Selected <i class='fa-solid fa-chevron-down'></i>" : "Select Rooms... <i class='fa-solid fa-chevron-down'></i>";
-        if (totalDisplay) { totalDisplay.textContent = "TZS " + total.toLocaleString(); }
-    }
-    roomCheckboxes.forEach(box => { box.addEventListener('change', updateDropdown); });
-}
-
-if (document.getElementById('room_name')) {
-    document.getElementById('room_name').addEventListener('change', function() {
-        var selected = this.options[this.selectedIndex];
-        document.getElementById('room_type').value = selected.getAttribute('data-type') || '';
-        document.getElementById('room_rate').value = selected.getAttribute('data-rate') || '';
-    });
-    if(document.getElementById('room_name').value) {
-        document.getElementById('room_name').dispatchEvent(new Event('change'));
-    }
-}
 
 function toggleCarSection(checkboxId, containerId) {
     const checkbox = document.getElementById(checkboxId);

@@ -29,13 +29,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $room_name = strtoupper($_POST['room_name']);
     $room_type = strtoupper($_POST['room_type']);
     $room_rate = $_POST['room_rate'];
+    // --- NEW: Handle USD Rate ---
+    $room_rate_usd = $_POST['room_rate_usd'] ?? 0;
 
     if ($room_id) {
-        $stmt = $conn->prepare("UPDATE rooms SET room_name=?, room_type=?, room_rate=? WHERE room_id=?");
-        $stmt->bind_param("ssdi", $room_name, $room_type, $room_rate, $room_id);
+        $stmt = $conn->prepare("UPDATE rooms SET room_name=?, room_type=?, room_rate=?, room_rate_usd=? WHERE room_id=?");
+        $stmt->bind_param("ssddi", $room_name, $room_type, $room_rate, $room_rate_usd, $room_id);
     } else {
-        $stmt = $conn->prepare("INSERT INTO rooms (room_name, room_type, room_rate, status) VALUES (?, ?, ?, 'AVAILABLE')");
-        $stmt->bind_param("ssd", $room_name, $room_type, $room_rate);
+        $stmt = $conn->prepare("INSERT INTO rooms (room_name, room_type, room_rate, room_rate_usd, status) VALUES (?, ?, ?, ?, 'AVAILABLE')");
+        $stmt->bind_param("ssdd", $room_name, $room_type, $room_rate, $room_rate_usd);
     }
     $stmt->execute();
     echo "<script>sessionStorage.setItem('roomSaved', '1'); window.location.href='room_details.php';</script>";
@@ -157,6 +159,10 @@ $reservations_result = mysqli_query($conn, $res_query);
     .badge-status { background: linear-gradient(135deg, #28a745, #20c997); color: #fff; }
     .badge-res-pending { background: #fff3cd; color: #856404; }
     .badge-res-confirmed { background: #d4edda; color: #155724; }
+    
+    /* NEW: Badge for dual pricing */
+    .price-badge { font-weight: 700; color: #1e3a5f; display: block; }
+    .price-usd { font-size: 0.8rem; color: #28a745; display: block; margin-top: 2px; }
 
     .btn-view { padding: 6px 12px; background: #667eea; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
     .delete-btn { background: #dc3545; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
@@ -260,18 +266,24 @@ $reservations_result = mysqli_query($conn, $res_query);
         <div class="table-responsive">
             <table>
                 <thead>
-                    <tr><th>#</th><th>Room Name</th><th>Type</th><th>Rate (TZS)</th><th>Status</th><th>Action</th></tr>
+                    <tr><th>#</th><th>Room Name</th><th>Type</th><th>Rate (Local / Int.)</th><th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody>
-                    <?php if($rooms_result && $rooms_result->num_rows>0): $i=1; while($row = $rooms_result->fetch_assoc()): ?>
+                    <?php if($rooms_result && $rooms_result->num_rows>0): $i=1; while($row = $rooms_result->fetch_assoc()): 
+                        // NEW: Handle USD gracefully in case column is missing
+                        $usd_rate = isset($row['room_rate_usd']) ? $row['room_rate_usd'] : 0;
+                    ?>
                         <tr>
                             <td><?= $i++ ?></td>
                             <td><strong><?= htmlspecialchars($row['room_name']) ?></strong></td>
                             <td><?= htmlspecialchars($row['room_type']) ?></td>
-                            <td><?= number_format($row['room_rate'],2) ?></td>
+                            <td>
+                                <span class="price-badge">TZS <?= number_format($row['room_rate'], 0) ?></span>
+                                <span class="price-usd">USD $<?= number_format($usd_rate, 2) ?></span>
+                            </td>
                             <td><span class="badge badge-<?= strtoupper($row['status']) ?>"><?= strtoupper($row['status']) ?></span></td>
                             <td>
-                                <button class="btn-view" onclick="openRoomModal('<?= $row['room_id'] ?>','<?= $row['room_name'] ?>','<?= $row['room_type'] ?>','<?= $row['room_rate'] ?>')"><i class="fa-solid fa-edit"></i> Edit</button>
+                                <button class="btn-view" onclick="openRoomModal('<?= $row['room_id'] ?>','<?= $row['room_name'] ?>','<?= $row['room_type'] ?>','<?= $row['room_rate'] ?>', '<?= $usd_rate ?>')"><i class="fa-solid fa-edit"></i> Edit</button>
                                 <button class="delete-btn" onclick="confirmDelete(<?= $row['room_id'] ?>)"><i class="fa-solid fa-trash"></i></button>
                             </td>
                         </tr>
@@ -446,7 +458,7 @@ $reservations_result = mysqli_query($conn, $res_query);
 
             <div class="form-group">
                 <label class="form-label">Room Name / Number</label>
-                <input type="text" name="room_name" id="room_name" placeholder="e.g. 101, A1" required>
+                <input type="text" name="room_name" id="room_name" placeholder="e.g. Zebra, 101" required>
             </div>
 
             <div class="form-group">
@@ -459,9 +471,16 @@ $reservations_result = mysqli_query($conn, $res_query);
                 </select>
             </div>
 
-            <div class="form-group">
-                <label class="form-label">Rate per Night (TZS)</label>
-                <input type="number" step="0.01" name="room_rate" id="room_rate" placeholder="0.00" required>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div class="form-group">
+                    <label class="form-label">Local Rate (TZS)</label>
+                    <input type="number" step="0.01" name="room_rate" id="room_rate" placeholder="e.g. 50000" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Int. Rate (USD $)</label>
+                    <input type="number" step="0.01" name="room_rate_usd" id="room_rate_usd" placeholder="e.g. 50" required>
+                </div>
             </div>
 
             <button type="submit" class="save-btn">Save Room</button>
@@ -511,14 +530,17 @@ function switchView(view) {
     }
 }
 
-function openRoomModal(id='', name='', type='', rate=''){
+// NEW: Updated openRoomModal to accept USD rate
+function openRoomModal(id='', name='', type='', rate='', rate_usd='0'){
     document.getElementById('room_id').value=id;
     document.getElementById('room_name').value=name;
     document.getElementById('room_type').value=type;
     document.getElementById('room_rate').value=rate;
+    document.getElementById('room_rate_usd').value=rate_usd; // Set USD value
     document.getElementById('roomModalTitle').innerText = id ? 'Edit Room' : 'Add Room';
     document.getElementById('roomModal').classList.add('show');
 }
+
 function closeRoomModal(){ 
     document.getElementById('roomModal').classList.remove('show'); 
 }

@@ -8,7 +8,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'manager') {
     exit();
 }
 
-$fullname = $_SESSION['fullname'];
+$fullname = $_SESSION['fullname'] ?? 'Manager';
 $currentPage = basename($_SERVER['PHP_SELF']);
 
 // Filter by date range and status
@@ -253,7 +253,7 @@ $summary = $summary_result->fetch_assoc();
             <div class="summary-icon icon-total"><i class="fa-solid fa-money-bills"></i></div>
             <div class="summary-content">
                 <h4>Total Revenue</h4>
-                <p>TZS <?= number_format($summary['total_amount'] ?? 0, 2) ?></p>
+                <p>TZS <?= number_format((float)($summary['total_amount'] ?? 0), 2) ?></p>
                 <small><?= $summary['total_transactions'] ?? 0 ?> transactions</small>
             </div>
         </div>
@@ -261,7 +261,7 @@ $summary = $summary_result->fetch_assoc();
             <div class="summary-icon icon-paid"><i class="fa-solid fa-circle-check"></i></div>
             <div class="summary-content">
                 <h4>Fully Paid</h4>
-                <p>TZS <?= number_format($summary['paid_amount'] ?? 0, 2) ?></p>
+                <p>TZS <?= number_format((float)($summary['paid_amount'] ?? 0), 2) ?></p>
                 <small><?= $summary['paid_count'] ?? 0 ?> payments</small>
             </div>
         </div>
@@ -269,7 +269,7 @@ $summary = $summary_result->fetch_assoc();
             <div class="summary-icon icon-partial"><i class="fa-solid fa-circle-half-stroke"></i></div>
             <div class="summary-content">
                 <h4>Partial Payments</h4>
-                <p>TZS <?= number_format($summary['partial_amount'] ?? 0, 2) ?></p>
+                <p>TZS <?= number_format((float)($summary['partial_amount'] ?? 0), 2) ?></p>
                 <small><?= $summary['partial_count'] ?? 0 ?> payments</small>
             </div>
         </div>
@@ -277,7 +277,7 @@ $summary = $summary_result->fetch_assoc();
             <div class="summary-icon icon-pending"><i class="fa-solid fa-clock"></i></div>
             <div class="summary-content">
                 <h4>Pending</h4>
-                <p>TZS <?= number_format($summary['pending_amount'] ?? 0, 2) ?></p>
+                <p>TZS <?= number_format((float)($summary['pending_amount'] ?? 0), 2) ?></p>
                 <small><?= $summary['pending_count'] ?? 0 ?> payments</small>
             </div>
         </div>
@@ -287,11 +287,11 @@ $summary = $summary_result->fetch_assoc();
         <form class="filter-form" method="GET">
             <div class="form-group">
                 <label class="form-label">From Date</label>
-                <input type="date" name="from" class="form-control" value="<?= htmlspecialchars($from) ?>">
+                <input type="date" name="from" class="form-control" value="<?= htmlspecialchars($from ?? '') ?>">
             </div>
             <div class="form-group">
                 <label class="form-label">To Date</label>
-                <input type="date" name="to" class="form-control" value="<?= htmlspecialchars($to) ?>">
+                <input type="date" name="to" class="form-control" value="<?= htmlspecialchars($to ?? '') ?>">
             </div>
             <div class="form-group">
                 <label class="form-label">Payment Status</label>
@@ -340,28 +340,31 @@ $summary = $summary_result->fetch_assoc();
                         $i=1; 
                         $grand_total = 0;
                         while($row = $result->fetch_assoc()): 
-                            $grand_total += $row['net_amount'];
-                            $badge_method_class = strtolower(str_replace(' ', '-', $row['payment_method']));
-                            $status_class = strtolower($row['status']);
+                            $net_amount = (float)($row['net_amount'] ?? 0);
+                            $grand_total += $net_amount;
+                            
+                            $badge_method_class = strtolower(str_replace(' ', '-', $row['payment_method'] ?? ''));
+                            $status_class = strtolower($row['status'] ?? '');
 
-                            $days = max(1, $row['days_stayed']); 
-                            $total_bill = ($days * $row['room_rate']);
-                            $total_paid = $row['total_paid_history'];
+                            $days = max(1, (int)($row['days_stayed'] ?? 1)); 
+                            $total_bill = ($days * (float)($row['room_rate'] ?? 0));
+                            $total_paid = (float)($row['total_paid_history'] ?? 0);
                             $balance = $total_bill - $total_paid;
-                            $show_balance = ($row['status'] == 'Paid') ? 0 : $balance;
+                            $show_balance = (($row['status'] ?? '') == 'Paid') ? 0 : $balance;
                     ?>
                         <tr>
                             <td><?= $i++ ?></td>
-                            <td><?= htmlspecialchars($row['guest_name']) ?></td>
-                            <td><?= htmlspecialchars($row['contact']) ?></td>
+                            <td><?= htmlspecialchars($row['guest_name'] ?? '') ?></td>
+                            <td><?= htmlspecialchars($row['contact'] ?? '') ?></td>
                             <td>
-                                <?= htmlspecialchars($row['room_name']) ?>
-                                <br><small style="color:#7f8c8d"><?= htmlspecialchars($row['room_type']) ?></small>
+                                <?= htmlspecialchars($row['room_name'] ?? '') ?>
+                                <br><small style="color:#7f8c8d"><?= htmlspecialchars($row['room_type'] ?? '') ?></small>
                             </td>
-                            <td><strong><?= $days ?></strong></td> <td class="text-right"><?= number_format($row['amount'], 2) ?></td>
-                            <td class="text-right"><?= number_format($row['extra_charges'], 2) ?></td>
-                            <td class="text-right"><?= number_format($row['discount'], 2) ?></td>
-                            <td class="text-right"><strong><?= number_format($row['net_amount'], 2) ?></strong></td>
+                            <td><strong><?= $days ?></strong></td> 
+                            <td class="text-right"><?= number_format((float)($row['amount'] ?? 0), 2) ?></td>
+                            <td class="text-right"><?= number_format((float)($row['extra_charges'] ?? 0), 2) ?></td>
+                            <td class="text-right"><?= number_format((float)($row['discount'] ?? 0), 2) ?></td>
+                            <td class="text-right"><strong><?= number_format($net_amount, 2) ?></strong></td>
                             
                             <td class="text-right">
                                 <?php if($show_balance > 0): ?>
@@ -371,9 +374,9 @@ $summary = $summary_result->fetch_assoc();
                                 <?php endif; ?>
                             </td>
 
-                            <td><span class="badge badge-<?= $badge_method_class ?>"><?= htmlspecialchars($row['payment_method']) ?></span></td>
-                            <td><?= date('d/M/y', strtotime($row['payment_date'])) ?></td>
-                            <td><span class="badge badge-<?= $status_class ?>"><?= htmlspecialchars($row['status']) ?></span></td>
+                            <td><span class="badge badge-<?= $badge_method_class ?>"><?= htmlspecialchars($row['payment_method'] ?? '') ?></span></td>
+                            <td><?= date('d/M/y', strtotime($row['payment_date'] ?? 'now')) ?></td>
+                            <td><span class="badge badge-<?= $status_class ?>"><?= htmlspecialchars($row['status'] ?? '') ?></span></td>
                         </tr>
                     <?php endwhile; ?>
                         <tr style="background: #f8f9fa; font-weight: bold; border-top: 3px solid #1e3a5f;">

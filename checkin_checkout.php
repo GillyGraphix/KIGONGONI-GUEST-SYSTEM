@@ -69,17 +69,27 @@ if (isset($_POST['action'])) {
         }
     }
 
+    // --- CHECKOUT LOGIC WITH ACTIVITY LOG ---
     if ($_POST['action'] == 'checkout') {
-        $q = mysqli_query($conn, "SELECT room_name FROM guest WHERE guest_id='$guest_id_safe'");
+        // Tumeongeza CONCAT kuchukua jina kamili la mgeni ili lipendeze kwenye log
+        $q = mysqli_query($conn, "SELECT room_name, CONCAT(first_name, ' ', last_name) AS full_name FROM guest WHERE guest_id='$guest_id_safe'");
         if ($row = mysqli_fetch_assoc($q)) {
             $room_name = $row['room_name'];
+            $guest_name = $row['full_name']; // Jina la mgeni
+            
             mysqli_query($conn, "UPDATE rooms SET status='Available' WHERE room_name='$room_name'");
             mysqli_query($conn, "UPDATE guest SET status='Checked-out' WHERE guest_id='$guest_id_safe'");
             mysqli_query($conn, "UPDATE checkin_checkout SET status='Checked Out' WHERE guest_id='$guest_id_safe'");
+            
+            // Weka log ya Check-out hapa
+            $log_desc = "Checked out guest: $guest_name from Room $room_name";
+            logActivity($conn, "Check-out", $log_desc);
+            
             $response = ['status' => 'success', 'message' => 'Guest successfully checked out.'];
         }
     }
     
+    // --- DELETE LOGIC ---
     if ($_POST['action'] == 'delete') {
 
         // STEP 1: Chukua jina la mgeni na chumba KABLA ya kufuta
@@ -103,6 +113,7 @@ if (isset($_POST['action'])) {
         // STEP 4: Jibu AJAX
         $response = ['status' => 'success', 'message' => 'Record deleted.'];
     }
+    
     // Hakikisha output ni JSON safi kabisa - futa kitu chochote kilichotoka
     ob_clean();
     echo json_encode($response);

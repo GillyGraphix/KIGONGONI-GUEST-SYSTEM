@@ -2,7 +2,7 @@
 $servername = "localhost";
 $username = "root"; // default for XAMPP
 $password = ""; // default for XAMPP
-$database = "hgmas_db"; // badilisha jina hili kama database yako ni tofauti
+$database = "seswaren_kigongoni"; // Jina la database yako mpya
 
 $conn = new mysqli($servername, $username, $password, $database);
 

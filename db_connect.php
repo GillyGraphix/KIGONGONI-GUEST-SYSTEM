@@ -3,7 +3,7 @@
 $servername = "localhost";
 $username = "root";        // Default XAMPP username
 $password = "";            // Default XAMPP password (usually empty)
-$dbname = "hgmas_db";      // Jina la database yako
+$dbname = "seswaren_kigongoni";      // Jina la database yako
 
 // Create connection
 $conn = new mysqli($servername, $username, $password, $dbname);

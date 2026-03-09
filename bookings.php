@@ -24,7 +24,7 @@ $currentPage = basename($_SERVER['PHP_SELF']);
 
 // --- 1. DATABASE SYNC ---
 $checkCol = $conn->query("SHOW COLUMNS FROM bookings LIKE 'booking_type'");
-if ($checkCol->num_rows == 0) {
+if ($checkCol == false || $checkCol->num_rows == 0) {
     $conn->query("ALTER TABLE bookings ADD COLUMN booking_type ENUM('Individual', 'Group') DEFAULT 'Individual' AFTER phone_number");
 }
 
@@ -38,19 +38,23 @@ $conn->query("CREATE TABLE IF NOT EXISTS `bookings` (
   `check_in` DATE NOT NULL,
   `check_out` DATE NOT NULL,
   `arrival_time` TIME DEFAULT NULL,
-  `status` ENUM('Pending', 'Confirmed', 'Checked-in', 'Cancelled') DEFAULT 'Pending',
+  `status` ENUM('Pending', 'Confirmed', 'Checked-in', 'Cancelled', 'Checked-out') DEFAULT 'Pending',
   `booked_by` VARCHAR(100) NOT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
+
 // --- 2. INTELLIGENT ROOM UPDATER ---
 $today = date('Y-m-d');
 $auto_reserve = $conn->query("SELECT room_name FROM bookings WHERE status = 'Confirmed' AND check_in <= '$today' AND check_out > '$today'");
-while($row = $auto_reserve->fetch_assoc()) {
-    $r_name = $row['room_name'];
-    $conn->query("UPDATE rooms SET status = 'Reserved' WHERE room_name = '$r_name' AND status = 'Available'");
+if ($auto_reserve) {
+    while($row = $auto_reserve->fetch_assoc()) {
+        $r_name = $row['room_name'];
+        $conn->query("UPDATE rooms SET status = 'Reserved' WHERE room_name = '$r_name' AND status = 'Available'");
+    }
 }
+
 
 // --- 3. LOGIC: CONFIRM BOOKING ---
 if (isset($_GET['action']) && $_GET['action'] == 'confirm' && isset($_GET['id'])) {
@@ -65,7 +69,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'confirm' && isset($_GET['id'])
         $conn->query("UPDATE bookings SET status = 'Confirmed' WHERE id = $id");
 
         if ($checkInDate <= $todayDate) {
-            $conn->query("UPDATE rooms SET status = 'Reserved' WHERE room_name = '$roomToReserve' AND status != 'Occupied'");
+            $conn->query("UPDATE rooms SET status = 'Reserved' WHERE room_name = '$roomToReserve' AND status = 'Available'");
             $msg = "Payment Received! Room is Reserved for TODAY.";
         } else {
             $msg = "Payment Received! Room remains Available until Check-in date.";
@@ -92,30 +96,31 @@ if (isset($_GET['delete_id'])) {
 if (isset($_POST['add_booking'])) {
     $f_name = mysqli_real_escape_string($conn, $_POST['first_name']);
     $l_name = mysqli_real_escape_string($conn, $_POST['last_name']);
-    $phone = mysqli_real_escape_string($conn, $_POST['phone_number']);
+    
+    $phone = isset($_POST['phone_number']) ? mysqli_real_escape_string($conn, $_POST['phone_number']) : '';
+    
     $b_type = mysqli_real_escape_string($conn, $_POST['booking_type']);
     $check_in = mysqli_real_escape_string($conn, $_POST['check_in']);
     $check_out = mysqli_real_escape_string($conn, $_POST['check_out']);
     $arrival_time = !empty($_POST['arrival_time']) ? mysqli_real_escape_string($conn, $_POST['arrival_time']) : NULL;
     $status = mysqli_real_escape_string($conn, $_POST['status']);
-    $user = $_SESSION['username'];
+    $user = $_SESSION['username'] ?? 'Receptionist';
 
-    // LOGIC YA KUCHAGUA VYUMBA (SINGLE vs MULTI)
     $rooms_selected = array();
 
     if ($b_type == 'Individual') {
-        // Tumia Single Select
         if (!empty($_POST['room_single'])) {
             $rooms_selected[] = $_POST['room_single'];
         }
     } else {
-        // Tumia Checkboxes (Group)
         if (!empty($_POST['room_group'])) {
-            $rooms_selected = $_POST['room_group']; // Hii ni Array tayari
+            $rooms_selected = $_POST['room_group'];
         }
     }
 
     $booked_count = 0;
+    $error_messages = []; 
+    $successfully_booked_rooms = []; // Array mpya kushikilia majina ya vyumba vilivyofanya vizuri
     
     if (empty($rooms_selected)) {
         $error = "Please select at least one room.";
@@ -123,33 +128,68 @@ if (isset($_POST['add_booking'])) {
         foreach ($rooms_selected as $room_name) {
             $room_name = mysqli_real_escape_string($conn, $room_name);
             
+            $checkConflict = $conn->query("SELECT id FROM bookings 
+                                           WHERE room_name = '$room_name' 
+                                           AND status NOT IN ('Cancelled', 'Checked-out') 
+                                           AND (
+                                                (check_in < '$check_out' AND check_out > '$check_in')
+                                           )");
+
+            if ($checkConflict && $checkConflict->num_rows > 0) {
+                $error_messages[] = "Room $room_name is already booked on the dates you selected.";
+                continue; 
+            }
+            
             $sql = "INSERT INTO bookings (first_name, last_name, phone_number, booking_type, room_name, check_in, check_out, arrival_time, status, booked_by) 
                     VALUES ('$f_name', '$l_name', '$phone', '$b_type', '$room_name', '$check_in', '$check_out', '$arrival_time', '$status', '$user')";
             
             if ($conn->query($sql)) {
                 $booked_count++;
+                $successfully_booked_rooms[] = $room_name; // Ongeza jina la chumba kwenye list
                 $todayDate = date('Y-m-d');
                 
                 if ($status == 'Confirmed' && $check_in <= $todayDate) {
-                    $conn->query("UPDATE rooms SET status = 'Reserved' WHERE room_name = '$room_name'");
+                    $conn->query("UPDATE rooms SET status = 'Reserved' WHERE room_name = '$room_name' AND status = 'Available'");
                 } 
             }
         }
+        
         if ($booked_count > 0) {
-            $success = "Successfully secured booking for $booked_count room(s).";
+            // Tengeneza string ya majina ya vyumba, mfano: "101, 102, 105"
+            $rooms_list_str = implode(", ", $successfully_booked_rooms);
+            
+            if ($b_type == 'Group') {
+                 $success = "You have successfully reserved $booked_count rooms: <strong>$rooms_list_str</strong>";
+            } else {
+                 $success = "You have successfully reserved room: <strong>$rooms_list_str</strong>";
+            }
+        }
+        
+        if (!empty($error_messages)) {
+            $error = implode("<br>", $error_messages);
         }
     }
 }
 
-// Fetch Rooms Data
-$roomsResult = $conn->query("SELECT room_name FROM rooms WHERE status='Available'");
+$roomsResult = $conn->query("
+    SELECT r.room_name, r.status, 
+           (SELECT check_out FROM bookings b 
+            WHERE b.room_name = r.room_name 
+            AND b.status IN ('Checked-in', 'Confirmed') 
+            AND b.check_out >= CURDATE() 
+            ORDER BY b.check_out ASC LIMIT 1) as occupied_until
+    FROM rooms r 
+    WHERE r.status != 'Maintenance' 
+    ORDER BY r.room_name ASC
+");
 $availableRoomsArray = [];
-while($r = $roomsResult->fetch_assoc()) {
-    $availableRoomsArray[] = $r;
+if($roomsResult){
+    while($r = $roomsResult->fetch_assoc()) {
+        $availableRoomsArray[] = $r;
+    }
 }
 
-// Fetch Active Bookings
-$active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Checked-in', 'Cancelled') ORDER BY check_in ASC");
+$active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Checked-in', 'Cancelled', 'Checked-out') ORDER BY check_in ASC");
 ?>
 
 <!DOCTYPE html>
@@ -163,16 +203,13 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
-    /* STANDARD DASHBOARD STYLES */
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
     body { background: #f5f7fa; color: #2c3e50; min-height: 100vh; overflow-x: hidden; }
 
-    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #f1f1f1; }
     ::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
 
-    /* Sidebar Styling */
     .sidebar { position: fixed; left: 0; top: 0; width: 260px; height: 100vh; background: #1e3a5f; color: #fff; padding: 30px 0; display: flex; flex-direction: column; box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1); z-index: 1000; overflow-y: auto; transition: transform 0.3s ease-in-out; }
     .sidebar-header { padding: 0 25px 30px 25px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 20px; }
     .sidebar-header h2 { font-weight: 600; font-size: 1.2rem; color: #fff; margin-bottom: 5px; text-align: center; }
@@ -185,26 +222,22 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
     .logout-section { padding: 0 15px 20px 15px; border-top: 1px solid rgba(255, 255, 255, 0.1); margin-top: 20px; padding-top: 20px; }
     .logout-btn { width: 100%; padding: 12px 18px; background: #dc3545; color: #fff; border: none; border-radius: 10px; cursor: pointer; transition: all 0.3s ease; font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; justify-content: center; }
 
-    /* Main Content */
     .main-content { margin-left: 260px; padding: 35px 40px; min-height: 100vh; transition: margin-left 0.3s ease-in-out; }
     .header { margin-bottom: 35px; background: #fff; padding: 25px 30px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); display: flex; align-items: center; gap: 15px; }
     .welcome { font-size: 1.6rem; font-weight: 700; color: #1e3a5f; }
     .menu-toggle { display: none; font-size: 1.5rem; color: #1e3a5f; cursor: pointer; }
 
-    /* Booking Grid Layout */
     .booking-grid { display: grid; grid-template-columns: 1fr 380px; gap: 30px; align-items: start; }
     
     .card { background: #fff; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05); }
     .card h3 { color: #1e3a5f; margin-bottom: 20px; font-size: 1.1rem; border-bottom: 2px solid #f0f2f5; padding-bottom: 10px; }
 
-    /* Table Styles */
     .table-responsive { overflow-x: auto; max-height: 700px; border: 1px solid #eee; border-radius: 10px; }
     table { width: 100%; border-collapse: collapse; min-width: 700px; }
     th { text-align: left; padding: 15px; background: #1e3a5f; color: #fff; font-size: 0.8rem; text-transform: uppercase; position: sticky; top: 0; z-index: 10; white-space: nowrap; }
     td { padding: 15px; border-bottom: 1px solid #eee; font-size: 0.9rem; vertical-align: middle; color: #34495e; }
     tr:hover { background: #f8f9fa; }
 
-    /* Actions & Badges */
     .action-buttons { display: flex; align-items: center; gap: 5px; }
     .btn-action { width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: white; text-decoration: none; transition: 0.3s; font-size: 0.9rem; }
     .btn-action:hover { transform: translateY(-2px); }
@@ -215,8 +248,7 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
     .badge { padding: 5px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
     .status-pending { background: #fff3cd; color: #856404; }
     .status-confirmed { background: #d4edda; color: #155724; }
-
-    /* Form Styles */
+    
     .form-group { margin-bottom: 15px; }
     .form-group label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.85rem; color: #34495e; }
     .form-control { width: 100%; padding: 10px 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 0.9rem; transition: 0.3s; background: #f9f9f9; }
@@ -225,12 +257,13 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
     .btn-primary { width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.3s; margin-top: 10px; }
     .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
 
-    /* Checkbox Group Container */
     .checkbox-container { display: none; border: 2px solid #e0e0e0; border-radius: 8px; padding: 10px; max-height: 150px; overflow-y: auto; background: #fff; }
     .checkbox-item { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid #f1f1f1; }
     .checkbox-item:last-child { border-bottom: none; }
     .checkbox-item input { width: 16px; height: 16px; margin-right: 10px; accent-color: #667eea; }
     .checkbox-item label { margin: 0; font-weight: 500; cursor: pointer; font-size: 0.85rem; flex: 1; }
+    .occupied-text { color: #dc3545; font-size: 0.75rem; margin-left: 5px; font-weight: 600;}
+    .reserved-text { color: #e67e22; font-size: 0.75rem; margin-left: 5px; font-weight: 600;}
 
     .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 900; }
     
@@ -289,6 +322,7 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
                             <th>Type</th>
                             <th>Room</th>
                             <th>Check-in</th>
+                            <th>Check-out</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -299,7 +333,11 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
                             <tr style="<?= ($row['check_in'] == date('Y-m-d')) ? 'background-color: #f0f7ff;' : '' ?>">
                                 <td>
                                     <strong><?= htmlspecialchars($row['first_name'].' '.$row['last_name']) ?></strong><br>
-                                    <small style="color: #7f8c8d;"><i class="fa-solid fa-phone"></i> <?= htmlspecialchars($row['phone_number']) ?></small>
+                                    <?php if(!empty($row['phone_number'])): ?>
+                                        <small style="color: #7f8c8d;"><i class="fa-solid fa-phone"></i> <?= htmlspecialchars($row['phone_number']) ?></small>
+                                    <?php else: ?>
+                                        <small style="color: #bdc3c7;"><i>N/A</i></small>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <span style="font-size: 0.75rem; background: #e2e6ea; padding: 2px 8px; border-radius: 4px; color: #495057;">
@@ -308,8 +346,13 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
                                 </td>
                                 <td><span style="font-weight: 700; color: #1e3a5f;"><?= htmlspecialchars($row['room_name']) ?></span></td>
                                 <td>
-                                    <?= date('d M', strtotime($row['check_in'])) ?>
-                                    <?php if($row['check_in'] == date('Y-m-d')) echo ' <span style="color:#dc3545; font-weight:bold; font-size:0.7rem;">(TODAY)</span>'; ?>
+                                    <?= date('d M Y', strtotime($row['check_in'])) ?>
+                                    <?php if($row['check_in'] == date('Y-m-d')) echo '<br><span style="color:#dc3545; font-weight:bold; font-size:0.7rem;">(TODAY)</span>'; ?>
+                                </td>
+                                <td>
+                                    <span style="color: #e67e22; font-weight: 600;">
+                                        <?= date('d M Y', strtotime($row['check_out'])) ?>
+                                    </span>
                                 </td>
                                 <td>
                                     <span class="badge <?= $row['status'] == 'Confirmed' ? 'status-confirmed' : 'status-pending' ?>">
@@ -339,7 +382,7 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
                             </tr>
                             <?php endwhile; ?>
                         <?php else: ?>
-                            <tr><td colspan="6" align="center" style="color: #95a5a6; padding: 40px;">No upcoming reservations found.</td></tr>
+                            <tr><td colspan="7" align="center" style="color: #95a5a6; padding: 40px;">No upcoming reservations found.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
@@ -359,7 +402,8 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
 
                 <div class="form-group"><label>First Name</label><input type="text" name="first_name" class="form-control" required placeholder="Guest Name"></div>
                 <div class="form-group"><label>Last Name</label><input type="text" name="last_name" class="form-control" required placeholder="Surname"></div>
-                <div class="form-group"><label>Phone Number</label><input type="text" name="phone_number" class="form-control" required placeholder="07..."></div>
+                
+                <div class="form-group"><label>Phone Number (Optional)</label><input type="text" name="phone_number" class="form-control" placeholder="0712345..."></div>
                 
                 <div class="form-group">
                     <label>Assign Room(s)</label>
@@ -367,18 +411,44 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
                     <select name="room_single" id="roomSingle" class="form-control" required>
                         <option value="">Select Room</option>
                         <?php foreach($availableRoomsArray as $room): ?>
-                            <option value="<?= htmlspecialchars($room['room_name']) ?>"><?= htmlspecialchars($room['room_name']) ?></option>
+                            <?php 
+                            $statusText = '';
+                            if (!empty($room['occupied_until'])) {
+                                $dateText = date('d-M-Y', strtotime($room['occupied_until']));
+                                $statusText = " (Occupied untill: " . $dateText . ")";
+                            } elseif ($room['status'] == 'Occupied') {
+                                $statusText = " (Occupied)";
+                            } elseif ($room['status'] == 'Reserved') {
+                                $statusText = " (Reserved LEO)";
+                            }
+                            ?>
+                            <option value="<?= htmlspecialchars($room['room_name']) ?>">
+                                <?= htmlspecialchars($room['room_name']) . $statusText ?>
+                            </option>
                         <?php endforeach; ?>
                     </select>
 
                     <div id="roomGroupContainer" class="checkbox-container">
                         <?php if(empty($availableRoomsArray)): ?>
-                            <div style="color:red; font-size:0.8rem; padding: 5px;">No available rooms.</div>
+                            <div style="color:red; font-size:0.8rem; padding: 5px;">No rooms found.</div>
                         <?php else: ?>
                             <?php foreach($availableRoomsArray as $room): ?>
+                                <?php 
+                                $statusText = '';
+                                if (!empty($room['occupied_until'])) {
+                                    $dateText = date('d-M-Y', strtotime($room['occupied_until']));
+                                    $statusText = '<span class="occupied-text">(Untill: ' . $dateText . ')</span>';
+                                } elseif ($room['status'] == 'Occupied') {
+                                    $statusText = '<span class="occupied-text">(Occupied)</span>';
+                                } elseif ($room['status'] == 'Reserved') {
+                                    $statusText = '<span class="reserved-text">(Reserved LEO)</span>';
+                                }
+                                ?>
                                 <div class="checkbox-item">
                                     <input type="checkbox" name="room_group[]" id="room_<?= $room['room_name'] ?>" value="<?= htmlspecialchars($room['room_name']) ?>">
-                                    <label for="room_<?= $room['room_name'] ?>">Room <?= htmlspecialchars($room['room_name']) ?></label>
+                                    <label for="room_<?= $room['room_name'] ?>">
+                                        Room <?= htmlspecialchars($room['room_name']) ?> <?= $statusText ?>
+                                    </label>
                                 </div>
                             <?php endforeach; ?>
                         <?php endif; ?>
@@ -412,7 +482,6 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
         document.querySelector('.sidebar-overlay').classList.toggle('active');
     }
 
-    // TOGGLE ROOM SELECTION MODE
     const typeSelect = document.getElementById('bookingType');
     const singleInput = document.getElementById('roomSingle');
     const groupContainer = document.getElementById('roomGroupContainer');
@@ -436,7 +505,7 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
     Swal.fire({
         icon: 'success',
         title: 'Success!',
-        text: '<?= $success ?? $_GET['success'] ?>',
+        html: '<?= $success ?? $_GET['success'] ?>',
         confirmButtonColor: '#1e3a5f'
     });
     <?php endif; ?>
@@ -444,8 +513,8 @@ $active_bookings = $conn->query("SELECT * FROM bookings WHERE status NOT IN ('Ch
     <?php if(isset($error)): ?>
     Swal.fire({
         icon: 'error',
-        title: 'Oops...',
-        text: '<?= $error ?>',
+        title: 'The Room is not available',
+        html: '<?= $error ?>',
         confirmButtonColor: '#dc3545'
     });
     <?php endif; ?>

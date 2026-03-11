@@ -102,7 +102,10 @@ if (isset($_POST['add_booking'])) {
     $b_type = mysqli_real_escape_string($conn, $_POST['booking_type']);
     $check_in = mysqli_real_escape_string($conn, $_POST['check_in']);
     $check_out = mysqli_real_escape_string($conn, $_POST['check_out']);
-    $arrival_time = !empty($_POST['arrival_time']) ? mysqli_real_escape_string($conn, $_POST['arrival_time']) : NULL;
+    
+    // MAREKEBISHO HAPA (Tunaweka quotation marks moja kwa moja au NULL)
+    $arrival_time = !empty($_POST['arrival_time']) ? "'" . mysqli_real_escape_string($conn, $_POST['arrival_time']) . "'" : "NULL";
+    
     $status = mysqli_real_escape_string($conn, $_POST['status']);
     $user = $_SESSION['username'] ?? 'Receptionist';
 
@@ -120,7 +123,7 @@ if (isset($_POST['add_booking'])) {
 
     $booked_count = 0;
     $error_messages = []; 
-    $successfully_booked_rooms = []; // Array mpya kushikilia majina ya vyumba vilivyofanya vizuri
+    $successfully_booked_rooms = []; 
     
     if (empty($rooms_selected)) {
         $error = "Please select at least one room.";
@@ -140,12 +143,13 @@ if (isset($_POST['add_booking'])) {
                 continue; 
             }
             
+            // MAREKEBISHO HAPA (Tumeondoa quotation marks kwenye $arrival_time)
             $sql = "INSERT INTO bookings (first_name, last_name, phone_number, booking_type, room_name, check_in, check_out, arrival_time, status, booked_by) 
-                    VALUES ('$f_name', '$l_name', '$phone', '$b_type', '$room_name', '$check_in', '$check_out', '$arrival_time', '$status', '$user')";
+                    VALUES ('$f_name', '$l_name', '$phone', '$b_type', '$room_name', '$check_in', '$check_out', $arrival_time, '$status', '$user')";
             
             if ($conn->query($sql)) {
                 $booked_count++;
-                $successfully_booked_rooms[] = $room_name; // Ongeza jina la chumba kwenye list
+                $successfully_booked_rooms[] = $room_name; 
                 $todayDate = date('Y-m-d');
                 
                 if ($status == 'Confirmed' && $check_in <= $todayDate) {
@@ -155,7 +159,6 @@ if (isset($_POST['add_booking'])) {
         }
         
         if ($booked_count > 0) {
-            // Tengeneza string ya majina ya vyumba, mfano: "101, 102, 105"
             $rooms_list_str = implode(", ", $successfully_booked_rooms);
             
             if ($b_type == 'Group') {
